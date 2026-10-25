@@ -1,168 +1,131 @@
-# Ansari WhatsApp Service
+# apps/whatsapp
 
-This service handles WhatsApp integration for the Ansari backend, providing a dedicated service for processing WhatsApp messages and communicating with the main Ansari backend.
+The WhatsApp front door for Ansari. It receives webhooks from Meta, signs the user in through `apps/auth`, and talks to `apps/api` with the resulting token.
 
-## Overview
+## How a message flows
 
-The Ansari WhatsApp service is designed as a separate microservice that:
+1. Meta posts a webhook to `POST /whatsapp/v2`. The `X-Hub-Signature-256` header is checked against `META_ANSARI_APP_SECRET`.
+2. The user is identified by their BSUID (Meta's per-user id), read from `from_user_id`. The phone number is never read, stored, logged or sent on.
+3. `apps/auth` (`POST /api/whatsapp/session`, header `X-Whatsapp-Api-Key`, body `{bsuid}`) returns a token for that user.
+4. The service finds the user's newest thread in `apps/api` (`GET /api/v2/threads`). If it is older than `WHATSAPP_CHAT_RETENTION_HOURS` it is deleted and a new one is created (`source: "whatsapp"`).
+5. The message goes to `POST /api/v2/threads/{id}/chat`. The server-sent-event stream is collected and the answer is sent back to the user's BSUID, split to fit WhatsApp's 4,000-character limit.
 
-1. Receives webhook events from the WhatsApp Business API
-2. Processes incoming messages
-3. Communicates with the main Ansari backend API
-4. Sends responses back to WhatsApp users
+If sign-in fails, the user gets a short apology and the failure goes to Sentry.
 
-By separating the WhatsApp functionality into its own service, we can:
-- Scale the WhatsApp service independently
-- Simplify the main Ansari backend codebase
-- Make deployments and updates easier
-- Improve testing and maintenance
-
-## Setup
-
-### Prerequisites
-
-- Python 3.8 or higher
-- Access to the WhatsApp Business API
-- A running instance of the Ansari backend API
-
-### Installation
-
-1. Clone the repository:
-   ```
-   git clone <repository-url>
-   cd ansari-whatsapp
-   ```
-
-2. Run the setup script:
-   - On Linux/Mac:
-     ```
-     ./setup.sh
-     ```
-   - On Windows:
-     ```
-     setup.bat
-     ```
-
-3. Edit the `.env` file with your configuration settings:
-   ```
-   # Update these with your values
-   META_BUSINESS_PHONE_NUMBER_ID=your_phone_number_id
-   META_ACCESS_TOKEN_FROM_SYS_USER=your_access_token
-   META_WEBHOOK_VERIFY_TOKEN=your_verify_token
-   BACKEND_SERVER_URL=http://your-ansari-backend:8000
-   ```
-
-## Running the Service
-
-### Development Mode
+## Layout
 
 ```
-python -m src.ansari_whatsapp.app.main
+src/ansari_whatsapp/
+  app/main.py        FastAPI app: health check, webhook verification, webhook handler
+  services/          conversation manager; apps/api, apps/auth and Meta clients (base / real / mock)
+  presenters/        formatting for WhatsApp (markdown to text, right-to-left, splitting)
+  utils/             config, JSON logging, webhook parsing, time helpers
 ```
 
-This will start the service on port 8001 (or the port specified in your .env file).
+## Run locally
 
-### Using Docker
+Use `uv`, not `pip`.
 
-To build and run the Docker container:
-
-```
-docker build -t ansari-whatsapp .
-docker run -p 8001:8001 --env-file .env ansari-whatsapp
-```
-
-## API Endpoints
-
-The service exposes the following endpoints:
-
-- `GET /`: Health check endpoint
-- `GET /whatsapp/v2`: Webhook verification endpoint for WhatsApp
-- `POST /whatsapp/v2`: Main webhook endpoint for receiving WhatsApp messages
-
-## Documentation
-
-### For Newcomers
-1. **Quick Start**: Read this README for setup and basic usage
-2. **Development Guide**: See `CLAUDE.md` for detailed development instructions, testing, and commands
-3. **Architecture Overview**: See `docs/hld/architecture.md` for system design and data flow
-4. **Implementation Details**: See `docs/lld/implementation_guide.md` for technical deep-dive
-
-### For Deployment
-- **AWS Setup**: See `docs/lld/aws/README.md` for complete deployment walkthrough
-- **GitHub Actions**: See `docs/lld/github_actions/README.md` for CI/CD configuration
-
-### For Migration Context
-- **Migration Plan**: See `docs/whatsapp_migration_plan/migration_plan.md` for the 4-phase migration from monolith to microservice
-
-## Architecture
-
-The service follows a clean architecture pattern:
-
-- `app/`: FastAPI application with webhook endpoints
-- `services/`: Business logic layer (conversation manager, API clients with mock support)
-- `presenters/`: Message formatting layer (WhatsApp-specific formatting, RTL support)
-- `utils/`: Utility modules (config, logging, parsing, splitting)
-
-## Integration with Ansari Backend
-
-The WhatsApp service communicates with the Ansari backend via 6 API endpoints:
-
-1. **POST /whatsapp/v2/users/register** - User registration
-2. **GET /whatsapp/v2/users/exists** - Check user existence
-3. **POST /whatsapp/v2/threads** - Create new threads
-4. **GET /whatsapp/v2/threads/last** - Get last thread info
-5. **GET /whatsapp/v2/threads/{thread_id}/history** - Get thread history
-6. **POST /whatsapp/v2/messages/process** - Process messages (streaming)
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| HOST | Host to bind the server to | 0.0.0.0 |
-| PORT | Port to run the server on | 8001 |
-| BACKEND_SERVER_URL | URL of the Ansari backend API | http://localhost:8000 |
-| META_API_VERSION | WhatsApp API version | v21.0 |
-| META_BUSINESS_PHONE_NUMBER_ID | Your WhatsApp business phone number ID | (required) |
-| META_ACCESS_TOKEN_FROM_SYS_USER | Access token for WhatsApp API | (required) |
-| META_WEBHOOK_VERIFY_TOKEN | Verify token for WhatsApp webhook | (required) |
-| WHATSAPP_CHAT_RETENTION_HOURS | Hours to retain chat history | 3 |
-| DEV_MODE | Enable development mode | false |
-
-## Testing
-
-### Running Tests
-
-The project includes comprehensive integration tests for WhatsApp webhook endpoints.
-
-```bash
-# Run all tests with detailed output
-pytest tests/ -v
-
-# Run with logs displayed
-pytest tests/ -v -s
-
-# Run only integration tests
-pytest tests/ -m integration -v
+```powershell
+cd apps/whatsapp
+copy .env.example .env      # then fill it in
+uv sync
+uv run python src/ansari_whatsapp/app/main.py
 ```
 
-### Test Configuration
+The service listens on `PORT` (default `8001`). With `MOCK_ANSARI_CLIENT=True`, `MOCK_AUTH_CLIENT=True` and `MOCK_META_API=True` it needs none of the other services.
 
-Tests require environment variables to be configured. Key settings:
+### Receiving real webhooks locally
 
-- **MOCK_ANSARI_CLIENT**: Set to `True` (default) to use mock client (no backend needed), `False` to use real backend
-- **MOCK_META_API**: Set to `True` (default) to use mock Meta API, `False` for real API
-- **BACKEND_SERVER_URL**: URL of the backend service (required if `MOCK_ANSARI_CLIENT=False`)
+Meta needs a public URL. A reserved zrok share forwards one to your machine:
 
-**Important**: If `MOCK_ANSARI_CLIENT=False` and the backend is not available, tests will fail with clear instructions on how to fix the issue.
+```powershell
+zrok reserve public localhost:8001 -n <META_WEBHOOK_ZROK_SHARE_TOKEN>
+```
 
-See `tests/README.md` for detailed testing documentation and troubleshooting.
+The matching callback URL (`https://<token>.share.zrok.io/whatsapp/v2`) is set on the `Ansari - Test` app in Meta's dashboard. See `.env.example` for who holds the token. Use the credentials of that same app (token, app secret, verify token).
 
-## Troubleshooting
+Staging shares the same test number, so start every message you send while testing locally with `!d ` (for example `!d what is ansari?`). Staging ignores those; your local service answers them.
 
-Logs are stored in the `logs/` directory. Check these logs for any errors or issues.
+### Test and staging switches
 
-Common issues:
-- WhatsApp API connection problems
-- Missing or invalid environment variables
-- Connection issues with the Ansari backend
-- Test failures due to backend availability (see `tests/README.md` for solutions)
+| Behaviour | When |
+|---|---|
+| Messages starting with `!d ` are ignored, so a developer testing locally on the shared test number does not get answered twice | `DEPLOYMENT_TYPE=staging` |
+| Every message gets a "down for maintenance" reply and nothing is processed | `WA_MAINTENANCE_MODE=True` (independent of `apps/api`'s own flag) |
+| JSON logs on stdout (otherwise readable logs) | any `DEPLOYMENT_TYPE` except `local` and `development` |
+| `GET /sentry-debug` deliberately crashes, to prove errors reach Sentry | every `DEPLOYMENT_TYPE` except `production` |
+
+## Environment variables
+
+`.env.example` is the full, commented list. The ones that matter:
+
+| Variable | Purpose |
+|---|---|
+| `DEPLOYMENT_TYPE` | `local`, `development`, `staging` or `production` |
+| `BACKEND_SERVER_URL` | `apps/api` base URL, no path |
+| `AUTH_SERVER_URL` | `apps/auth` base URL, no path |
+| `AUTH_WHATSAPP_API_KEY` | Shared secret for `apps/auth`'s WhatsApp sign-in endpoint |
+| `META_BUSINESS_PHONE_NUMBER_ID` | Phone number this service answers on; webhooks for other numbers are ignored |
+| `META_ACCESS_TOKEN_FROM_SYS_USER` | Meta API token (belongs to one Meta app) |
+| `META_ANSARI_APP_SECRET` | Verifies webhook signatures (must be the same app as the token) |
+| `META_WEBHOOK_VERIFY_TOKEN` | One-time webhook URL verification |
+| `WA_MAINTENANCE_MODE` | See above |
+| `WHATSAPP_CHAT_RETENTION_HOURS` | How long a conversation continues before a fresh thread (default 3) |
+| `SENTRY_DSN` | Empty disables Sentry |
+| `MOCK_ANSARI_CLIENT`, `MOCK_AUTH_CLIENT`, `MOCK_META_API` | Replace the real services with fakes |
+
+Meta credentials differ per Meta app (Test, Staging, production). A token from one app will not work with another app's secret.
+
+## Tests
+
+```powershell
+cd apps/whatsapp
+uv run --with ruff ruff check .
+uv run pytest tests -q
+```
+
+No network or other service is needed. See [tests/README.md](tests/README.md).
+
+## Logging
+
+In deployed environments each log line is one JSON object on stdout with `message`, `level`, `request_id`, `file`, `line` and `function`, plus `exception` on errors. This is the shape Railway indexes.
+
+In Railway's log search:
+
+- one request: `@request_id:<id>` (the id is also returned in the `X-Request-ID` response header)
+- all errors: `@level:error`
+
+Logs deliberately contain no phone numbers, BSUIDs or message text. Railway caps logging at 500 lines per second per replica, and retention depends on the plan.
+
+## Deploying (Railway)
+
+Only the facts below come from this repo. The dashboard settings themselves are set by an operator.
+
+- Build with the repository root as the root directory and `apps/whatsapp/Dockerfile` as the Dockerfile path.
+- Set a watch path so only changes under `apps/whatsapp/**` rebuild this service (see the "Railway service configuration" block in `RELEASE.md`).
+- Health check path: `/`.
+- The app binds `PORT` when Railway provides it. If the public domain is given a fixed target port, it must match.
+- Each environment needs its own Meta credentials and its own webhook callback URL (`https://<domain>/whatsapp/v2`).
+
+The Docker image has not been built or run by the author of this change. Do that first when preparing a deploy.
+
+### Staging smoke test
+
+1. `GET /` returns 200.
+2. Meta's webhook verification succeeds for the staging callback URL.
+3. A normal message gets an answer; a message starting with `!d ` gets no reply from staging.
+4. A second message within the retention window continues the same conversation.
+5. A message after the retention window starts a new conversation and the old thread is gone from `GET /api/v2/threads`.
+6. An answer longer than 4,000 characters arrives as several messages in order.
+7. The answer is delivered to a user whose phone number is hidden (BSUID only).
+8. With `WA_MAINTENANCE_MODE=True`, the maintenance reply is sent and no chat call appears in `apps/api` logs.
+9. `GET /sentry-debug` produces a Sentry event.
+10. In Railway's logs, `@request_id:<id>` finds all lines of one message, and none contains a phone number or message text.
+
+### Known gaps to confirm before production
+
+- That `from_user_id` is present in every webhook, and that replying to a BSUID is accepted by Meta. Neither has been tried against live Meta.
+- `apps/auth`'s `/whatsapp` endpoint contract is assumed (route, header and `AUTH_WHATSAPP_API_KEY`); nothing here has run against a live `apps/auth` or `apps/api`.
+- `apps/api`'s chat routes save every message with `source: "web"`, so WhatsApp messages are not marked as such in the history.
+- Two near-simultaneous first messages from one user can create two threads. Extra `whatsapp` threads are harmless and can be swept manually (keep the newest per user).
