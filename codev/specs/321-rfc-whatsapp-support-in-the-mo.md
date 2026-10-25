@@ -11,7 +11,7 @@ Ansari's WhatsApp experience runs on two legacy repositories (`ansari-project/an
 
 A production issue on 2026-10-17 shows the cost: Meta now lets users hide their phone number behind a WhatsApp username and sends an anonymous business-scoped user ID (BSUID) instead. The legacy service, which identifies users by phone number only, failed on these messages and the users got no reply. An interim notice (ansari-whatsapp#8 / PR #9) exists, and proper support was deferred to this port.
 
-Affected: all WhatsApp users, especially phone-hidden users who currently cannot use Ansari on WhatsApp at all; and the maintainers, who must keep two stacks alive.
+Affected: all WhatsApp users who currently cannot use Ansari on WhatsApp at all; and the maintainers, who must keep two stacks alive.
 
 ## Current State
 
@@ -73,9 +73,9 @@ Other constraints:
 
 ## Assumptions
 
-- `apps/auth` will provide the `/whatsapp` endpoint and handle the fact that a WhatsApp user has no email (owned by Amr; not yet confirmed).
+- `apps/auth` provides the `/whatsapp` endpoint and handles the fact that a WhatsApp user has no email (owned by Amr).
 - Ansari uses a single Meta business portfolio and is not enrolled in parent BSUIDs, so the regular BSUID suffices (to be confirmed).
-- For this spec, the `/whatsapp` contract is assumed to be: `POST /api/whatsapp/session`, authenticated with a WhatsApp API key (name assumed: `AUTH_WHATSAPP_API_KEY`), request `{ "bsuid": "US.…" }`, response `{ "token": "<JWT>" }` in the format `apps/auth` already issues, errors as `{ message }` (400 malformed BSUID, 401 wrong key, 500).
+- The `/whatsapp` contract is taken as given: `POST /api/whatsapp/session`, authenticated with a WhatsApp API key (name assumed: `AUTH_WHATSAPP_API_KEY`), request `{ "bsuid": "US.…" }`, response `{ "token": "<JWT>" }` in the format `apps/auth` already issues, errors as `{ message }` (400 malformed BSUID, 401 wrong key, 500).
 - The `preferences` table (one row per setting keyed by GUID) is the home for user settings; today that is only preferred language, and expiry stays global.
 - Meta's own throughput limits and webhook retry behaviour sufficiently bound traffic (see Baked Decision 7); this has not been load tested.
 - Message-ID duplicates from Meta are rare enough to ignore (Baked Decision 5).
@@ -102,7 +102,7 @@ Recommended: Approach 1.
 ## Open Questions
 
 **Critical**
-- What is the final `/whatsapp` contract in `apps/auth` (path, auth scheme, API key name, error shape, no-email handling)? To be agreed with Amr; this spec assumes the contract in Assumptions.
+- None. The `/whatsapp` contract in Assumptions is treated as final.
 
 **Important**
 - Where do the WhatsApp service's secrets and per-environment Meta credentials live in the monorepo's deployment setup?
@@ -135,7 +135,7 @@ Recommended: Approach 1.
 
 | Risk | Probability | Impact | Mitigation |
 |------|-------------|--------|------------|
-| `/whatsapp` contract differs from the assumed one | Medium | Medium | Confirm with Amr before the plan; isolate the token exchange behind one client |
+| `/whatsapp` contract changes after implementation starts | Low | Medium | Isolate the token exchange behind one client |
 | `apps/auth` cannot support users without email | Low | High | Confirm early with Amr |
 | Stale identities accumulate (retention deferred) | High | Low | Tracked as a deferred decision |
 | Always-"OK" hides failed or lost messages | Medium | Medium | Log failures with request correlation and Sentry; revisit if lost replies appear |
