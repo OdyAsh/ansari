@@ -189,6 +189,11 @@ class WhatsAppConversationManager:
         service. That is the deliberate deployment (spec 321: WhatsApp traffic is not expected to need more than
         one instance); with several instances it would have to move to a shared place such as a database lock.
 
+        Only this step is serialized, not the answer that follows. If a user sends a second message while the first
+        is still being answered, both use the same thread and are processed at the same time, so their rows can
+        interleave in the thread's history. This is accepted: holding the lock for the whole answer (a stream can
+        take a minute) would make a user's next message wait that long, and a user sending twice in a row is rare.
+
         Args:
             first_message (str): The incoming text, used to title a new thread.
 
@@ -237,8 +242,16 @@ class WhatsAppConversationManager:
                 )
                 return None
 
+            new_thread_id = result.get("thread_id")
+            if not new_thread_id:
+                logger.error("Thread creation returned no thread id")
+                await self.send_whatsapp_message(
+                    "An unexpected error occurred while creating a new chat session. Please try again later."
+                )
+                return None
+
             logger.info("Created a new thread for the whatsapp user")
-            return result.get("thread_id")
+            return new_thread_id
 
     async def handle_text_message(self) -> None:
         """Process an incoming text message and send a response to the WhatsApp sender."""

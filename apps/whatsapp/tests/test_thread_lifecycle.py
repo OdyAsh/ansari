@@ -119,6 +119,72 @@ def test_message_after_expiry_deletes_the_old_thread_and_starts_a_new_one():
     assert get_ansari_client()._threads[new]["messages"] == []
 
 
+def test_expiry_is_read_from_the_z_timestamp_apps_api_really_sends(monkeypatch):
+    """apps/api sends `...Z`, while the mock stores `+00:00`, so this is the format production depends on."""
+    manager = _manager()
+    four_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    calls = []
+
+    async def old_thread_info(self, token):
+        return {"thread_id": "old", "last_message_time": four_hours_ago}
+
+    async def spy_delete(self, token, thread_id):
+        calls.append(("delete", thread_id))
+
+    async def spy_create(self, token, title):
+        calls.append(("create", title))
+        return {"thread_id": "new"}
+
+    monkeypatch.setattr(AnsariClientMock, "get_last_thread_info", old_thread_info)
+    monkeypatch.setattr(AnsariClientMock, "delete_thread", spy_delete)
+    monkeypatch.setattr(AnsariClientMock, "create_thread", spy_create)
+
+    assert asyncio.run(manager._resolve_thread("hello")) == "new"
+    assert calls == [("delete", "old"), ("create", "hello")]
+
+
+def test_expired_thread_flow_against_the_real_client_makes_the_expected_calls(monkeypatch):
+    """List threads, delete the expired one, create a new one: in that order, all with the user's token."""
+    seen = []
+    four_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path, request.headers.get("authorization")))
+        if request.method == "GET":
+            return httpx.Response(200, json=[{"thread_id": "old", "updated_at": four_hours_ago}])
+        if request.method == "DELETE":
+            return httpx.Response(200, json={"message": "Thread deleted successfully"})
+        return httpx.Response(200, json={"thread_id": "new"})
+
+    manager = _manager()
+    manager.ansari_client = _real_client(monkeypatch, handler)
+
+    assert asyncio.run(manager._resolve_thread("hello")) == "new"
+    token = f"Bearer {manager.token}"
+    assert seen == [
+        ("GET", "/api/v2/threads", token),
+        ("DELETE", "/api/v2/threads/old", token),
+        ("POST", "/api/v2/threads", token),
+    ]
+
+
+def test_creation_response_without_a_thread_id_is_a_failure_the_user_hears_about(monkeypatch):
+    manager = _manager()
+    sent = []
+
+    async def no_id(self, token, title):
+        return {}
+
+    async def spy_send(self, msg_body, recipient_bsuid=None):
+        sent.append(msg_body)
+
+    monkeypatch.setattr(AnsariClientMock, "create_thread", no_id)
+    monkeypatch.setattr(WhatsAppConversationManager, "send_whatsapp_message", spy_send)
+
+    assert asyncio.run(manager._resolve_thread("hello")) is None
+    assert sent
+
+
 def test_another_users_thread_is_never_touched():
     mine = _manager()
     theirs = _manager(OTHER_BSUID)
