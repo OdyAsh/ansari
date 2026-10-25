@@ -370,6 +370,25 @@ def _post_signed_webhook(settings, message: dict, contacts: list | None = None):
 
 
 @pytest.mark.integration
+def test_webhook_rejects_missing_signature(settings):
+    """A webhook with no signature header is rejected."""
+    response = client.post("/whatsapp/v2", content=b"{}")
+
+    assert response.status_code == 403
+
+
+@pytest.mark.integration
+def test_webhook_rejects_wrong_signature(settings):
+    """A webhook signed with the wrong secret is rejected."""
+    body_bytes = b"{}"
+    signature = hmac.new(b"not-the-app-secret", body_bytes, hashlib.sha256).hexdigest()
+
+    response = client.post("/whatsapp/v2", content=body_bytes, headers={"X-Hub-Signature-256": f"sha256={signature}"})
+
+    assert response.status_code == 403
+
+
+@pytest.mark.integration
 def test_webhook_phone_hidden_user(settings):
     """A BSUID-only sender (no `from`) gets the phone-number notice and is not processed."""
     message = {

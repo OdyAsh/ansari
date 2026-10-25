@@ -125,7 +125,7 @@ Finish environment behaviour and make the service testable and deployable by oth
 
 #### Files to Create / Modify
 
-- In `apps/whatsapp`: maintenance behaviour driven by the same global flag as `apps/api` (`MAINTENANCE_MODE`) instead of the WhatsApp-specific flag, keeping the notice message; keep the staging `!d ` filter; `README.md` for the app.
+- In `apps/whatsapp`: maintenance behaviour driven by the same global flag as `apps/api` (`MAINTENANCE_MODE`) instead of the WhatsApp-specific flag, keeping the notice message; keep the staging `!d ` filter; `README.md` and `tests/README.md` for the app (both still reference legacy files that were not imported).
 - Deployment notes: per-environment Meta credentials and secrets, and the deploy steps for staging and production, following the monorepo's existing deployment docs.
 
 #### Deliverables

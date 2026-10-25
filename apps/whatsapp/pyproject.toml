@@ -45,6 +45,7 @@ Tracker = "https://github.com/ansari-project/ansari-whatsapp/issues"
 # Install with `uv pip install -e .[dev]` for development dependencies
 dev = [
     "fastapi[standard]>=0.95.1",
+    "ruff>=0.8.0",
 ]
 
 [tool.ruff]
