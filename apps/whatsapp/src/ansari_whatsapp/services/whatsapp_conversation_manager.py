@@ -11,7 +11,7 @@ from loguru import logger
 
 from ansari_whatsapp.services.service_provider import get_ansari_client, get_auth_client
 from ansari_whatsapp.services.meta_service_provider import get_meta_api_service
-from ansari_whatsapp.utils.app_logger import request_id_var, user_id_var
+from ansari_whatsapp.utils.app_logger import request_id_var
 from ansari_whatsapp.utils.exceptions import (
     AuthTokenError,
     ThreadCreationError,
@@ -19,7 +19,6 @@ from ansari_whatsapp.utils.exceptions import (
     ThreadInfoError,
     MessageProcessingError,
 )
-from ansari_whatsapp.utils.token_utils import get_subject
 from ansari_whatsapp.utils.time_utils import calculate_time_passed, get_retention_time_seconds
 from ansari_whatsapp.presenters.whatsapp_message_formatter import format_for_whatsapp
 from ansari_whatsapp.utils.whatsapp_message_splitter import split_message
@@ -108,37 +107,40 @@ class WhatsAppConversationManager:
             logger.error(f"Error in typing indicator loop: {e}")
             logger.exception(e)
 
-    async def authenticate_user(self) -> str | None:
-        """Exchange the sender's BSUID for a JWT with apps/auth and return the user's GUID.
+    @staticmethod
+    def _capture(error: Exception, error_type: str) -> None:
+        """Report an error to Sentry, tagged with its kind and this request's id (never any user content)."""
+        sentry_sdk.set_tag("error_type", error_type)
+        sentry_sdk.set_context("message_details", {"request_id": request_id_var.get()})
+        sentry_sdk.capture_exception(error)
 
-        The same BSUID always maps to the same GUID, and a new BSUID is a new user. apps/auth creates the
+    async def authenticate_user(self) -> bool:
+        """Exchange the sender's BSUID for a JWT with apps/auth.
+
+        The same BSUID always maps to the same account, and a new BSUID is a new user. apps/auth creates the
         account on first use, so there is no separate registration step. The token is kept on this object
         for the later apps/api calls.
 
         Returns:
-            str | None: The user's GUID (the JWT's `sub`) on success, None on failure.
+            bool: True if a token was obtained, False if the exchange failed.
         """
         if not self.bsuid:
             logger.error("Cannot authenticate user: bsuid is not set")
-            return None
+            return False
 
         try:
             self.token = await self.auth_client.get_token(self.bsuid)
         except AuthTokenError as e:
             logger.error(f"Failed to get a token for the user: {e}")
-            return None
+            self._capture(e, "auth_token_failure")
+            return False
         except Exception as e:
             logger.error(f"Unexpected error getting a token for the user: {type(e).__name__}")
-            return None
+            self._capture(e, "auth_token_failure")
+            return False
 
-        user_id = get_subject(self.token)
-        if not user_id:
-            logger.error("The token from apps/auth has no readable subject")
-            self.token = None
-            return None
-
-        logger.debug(f"Authenticated whatsapp user (user_id: {user_id})")
-        return user_id
+        logger.debug("Authenticated whatsapp user")
+        return True
 
     async def _send_whatsapp_typing_indicator(self) -> None:
         """Send a typing indicator to the WhatsApp recipient."""
@@ -205,6 +207,7 @@ class WhatsAppConversationManager:
             last_thread_info = await self.ansari_client.get_last_thread_info(self.token)
         except ThreadInfoError as e:
             logger.error(f"Failed to get thread info: {e}")
+            self._capture(e, "thread_info_failure")
             await self.send_whatsapp_message(
                 "Sorry, we're having trouble accessing your chat history. Please try again later."
             )
@@ -228,6 +231,7 @@ class WhatsAppConversationManager:
             except ThreadDeletionError as e:
                 # Keep one thread per user: do not start a second one next to an expired thread we could not delete
                 logger.error(f"Failed to delete the expired thread: {e}")
+                self._capture(e, "thread_deletion_failure")
                 await self.send_whatsapp_message(
                     "An unexpected error occurred while starting a new chat session.. Please try again later."
                 )
@@ -237,6 +241,7 @@ class WhatsAppConversationManager:
             result = await self.ansari_client.create_thread(self.token, " ".join(first_message.split()[:6]))
         except ThreadCreationError as e:
             logger.error(f"Failed to create thread: {e}")
+            self._capture(e, "thread_creation_failure")
             await self.send_whatsapp_message(
                 "An unexpected error occurred while creating a new chat session. Please try again later."
             )
@@ -278,15 +283,7 @@ class WhatsAppConversationManager:
                 )
             except httpx.TimeoutException as e:
                 logger.error(f"Backend timeout while processing message: {e}")
-                sentry_sdk.set_tag("error_type", "backend_timeout")
-                sentry_sdk.set_context(
-                    "message_details",
-                    {
-                        "request_id": request_id_var.get(),
-                        "user_id": user_id_var.get(),
-                    },
-                )
-                sentry_sdk.capture_exception(e)
+                self._capture(e, "backend_timeout")
                 await self.send_whatsapp_message("The request timed out. Please try sending your message again.")
                 # Cancel typing indicator if running
                 if self.typing_indicator_task and not self.typing_indicator_task.done():
@@ -294,15 +291,7 @@ class WhatsAppConversationManager:
                 return
             except MessageProcessingError as e:
                 logger.error(f"Failed to process message: {e}")
-                sentry_sdk.set_tag("error_type", "message_processing_failure")
-                sentry_sdk.set_context(
-                    "message_details",
-                    {
-                        "request_id": request_id_var.get(),
-                        "user_id": user_id_var.get(),
-                    },
-                )
-                sentry_sdk.capture_exception(e)
+                self._capture(e, "message_processing_failure")
                 await self.send_whatsapp_message("An error occurred while processing your message. Please try again later.")
                 # Cancel typing indicator if running
                 if self.typing_indicator_task and not self.typing_indicator_task.done():

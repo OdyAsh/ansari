@@ -18,7 +18,6 @@ from ansari_whatsapp.services.meta_api_service_mock import MetaApiServiceMock
 from ansari_whatsapp.services.service_provider import reset_ansari_client, reset_auth_client
 from ansari_whatsapp.utils.config import get_settings
 from ansari_whatsapp.utils.exceptions import AuthTokenError, MessageProcessingError
-from ansari_whatsapp.utils.token_utils import get_subject
 
 BSUID = "US.13491208655302741918"
 PHONE = "201234567899"
@@ -125,9 +124,9 @@ def test_auth_client_response_without_token_raises(monkeypatch):
 def test_mock_auth_same_bsuid_same_user_new_bsuid_new_user():
     mock = AuthClientMock()
 
-    first = get_subject(asyncio.run(mock.get_token(BSUID)))
-    again = get_subject(asyncio.run(mock.get_token(BSUID)))
-    other = get_subject(asyncio.run(mock.get_token("US.99999999999999999999")))
+    first = asyncio.run(mock.get_token(BSUID))
+    again = asyncio.run(mock.get_token(BSUID))
+    other = asyncio.run(mock.get_token("US.99999999999999999999"))
 
     assert first == again
     assert first != other
@@ -281,13 +280,6 @@ def test_no_phone_number_reaches_apps_api(monkeypatch):
     assert response.status_code == 200
     assert len(requests) == 3  # list threads, create thread, send message
     assert not any(PHONE in r or BSUID in r for r in requests)
-
-
-def test_malformed_token_subject_does_not_raise():
-    # Valid base64 JSON that is not an object, and a payload that is not JSON at all
-    assert get_subject("a.NQ.c") is None
-    assert get_subject("a.bm90LWpzb24.c") is None
-    assert get_subject("not-a-jwt") is None
 
 
 def test_phone_hidden_user_is_answered():

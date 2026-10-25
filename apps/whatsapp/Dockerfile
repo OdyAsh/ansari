@@ -6,7 +6,8 @@ WORKDIR /app/
 
 # Install uv
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#installing-uv
-COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
+# Same uv line as the one that wrote uv.lock (`revision = 3`); keep them in step when upgrading
+COPY --from=ghcr.io/astral-sh/uv:0.9.13 /uv /uvx /bin/
 
 # Place executables in the environment at the front of the path
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#using-the-environment
@@ -38,10 +39,10 @@ COPY ./pyproject.toml ./uv.lock /app/
 
 COPY ./src /app/src/
 
-# Sync the project
+# Sync the project (--frozen: install exactly what uv.lock says, never re-resolve at deploy time)
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#intermediate-layers
 RUN --mount=type=cache,target=/root/.cache/uv \
-  uv sync
+  uv sync --frozen
 
 # Run the application
 CMD ["python", "src/ansari_whatsapp/app/main.py"]

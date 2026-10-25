@@ -16,7 +16,6 @@ from ansari_whatsapp.utils.exceptions import (
     ThreadInfoError,
     MessageProcessingError,
 )
-from ansari_whatsapp.utils.token_utils import get_subject
 from ansari_whatsapp.services.ansari_client_base import AnsariClientBase
 
 
@@ -68,8 +67,8 @@ def simulate_backend_behavior(
 class AnsariClientMock(AnsariClientBase):
     """Mock implementation of the Ansari client for testing without apps/api.
 
-    Threads are kept in memory per user GUID (the `sub` of the token), mirroring apps/api,
-    where the JWT alone identifies the user.
+    Threads are kept in memory per token, mirroring apps/api, where the token alone identifies the user.
+    The mock auth client gives each BSUID its own stable token.
     """
 
     def __init__(self):
@@ -81,10 +80,9 @@ class AnsariClientMock(AnsariClientBase):
         logger.info("Initialized AnsariClientMock - using mock backend")
 
     def _user(self, token: str, error: type[Exception]) -> str:
-        user = get_subject(token)
-        if not user:
+        if not token:
             raise error("Invalid token")
-        return user
+        return token
 
     @simulate_backend_behavior()
     async def create_thread(self, token: str, title: str) -> dict:

@@ -44,10 +44,7 @@ def _age_thread(thread_id: str, seconds: float) -> None:
 
 
 def _threads_of(manager: WhatsAppConversationManager) -> list[str]:
-    from ansari_whatsapp.utils.token_utils import get_subject
-
-    user = get_subject(manager.token)
-    return [t["thread_id"] for t in get_ansari_client()._threads.values() if t["user"] == user]
+    return [t["thread_id"] for t in get_ansari_client()._threads.values() if t["user"] == manager.token]
 
 
 _RealAsyncClient = httpx.AsyncClient

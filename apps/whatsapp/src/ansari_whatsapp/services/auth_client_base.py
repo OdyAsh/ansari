@@ -15,7 +15,7 @@ class AuthClientBase(ABC):
             bsuid (str): The business-scoped user ID from Meta's webhook (never a phone number).
 
         Returns:
-            str: The JWT. Its `sub` claim is the user's GUID.
+            str: The JWT, sent as the bearer token on every apps/api call.
 
         Raises:
             AuthTokenError: If the exchange fails.

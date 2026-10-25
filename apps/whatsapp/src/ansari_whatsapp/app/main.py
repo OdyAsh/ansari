@@ -28,7 +28,7 @@ from ansari_whatsapp.utils.whatsapp_webhook_utils import (
 )
 
 # Note: Importing app_logger automatically configures loguru's logger due to module-level execution
-from ansari_whatsapp.utils.app_logger import logger, request_id_var, user_id_var
+from ansari_whatsapp.utils.app_logger import logger, request_id_var
 from ansari_whatsapp.utils.time_utils import is_message_too_old
 from ansari_whatsapp.utils.config import get_settings
 from ansari_whatsapp.utils.exceptions import UnexpectedMetaPayloadError
@@ -108,9 +108,13 @@ async def general_exception_handler(request, exc):
     )
 
 
-@app.get("/sentry-debug")
 async def trigger_error():
     1 / 0  # deliberate error to test Sentry
+
+
+# This open endpoint crashes on purpose, so it is only registered outside production
+if get_settings().DEPLOYMENT_TYPE != "production":
+    app.get("/sentry-debug")(trigger_error)
 
 
 # Add CORS middleware with logging
@@ -363,10 +367,8 @@ async def main_webhook(
             success=False, message="Message too old, notified user", status_code=422, error_code="MESSAGE_TOO_OLD"
         )
 
-    # Exchange the sender's BSUID for a JWT with apps/auth and get their user_id (GUID)
-    user_id = await conversation_manager.authenticate_user()
-
-    if user_id is None:
+    # Exchange the sender's BSUID for a JWT with apps/auth
+    if not await conversation_manager.authenticate_user():
         # Token exchange failed
         background_tasks.add_task(
             conversation_manager.send_whatsapp_message,
@@ -375,10 +377,6 @@ async def main_webhook(
         return create_response_for_meta(
             success=False, message="User authentication failed", status_code=500, error_code="USER_AUTHENTICATION_FAILED"
         )
-
-    # Set user_id in contextvar for all subsequent logs (including background tasks)
-    # Check docs/logging/understanding_contextvars_in_python.md for details
-    user_id_var.set(user_id)
 
     # Check if the incoming message is a media type other than text
     if incoming_msg_type != "text":
@@ -432,7 +430,7 @@ if __name__ == "__main__":
     uvicorn.run(
         module_name,  # Dynamically constructed module path
         host=host,
-        port=8001,
+        port=int(os.getenv("PORT", "8001")),  # Railway's public domain targets the service's PORT variable
         reload=reload_uvicorn,
         reload_includes=reload_includes,
         log_level="info",  # Uvicorn expects lowercase log levels
