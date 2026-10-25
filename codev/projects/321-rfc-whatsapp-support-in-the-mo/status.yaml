@@ -11,11 +11,11 @@ plan_phases:
     status: complete
   - id: thread_lifecycle
     title: One thread per user with expiry
-    status: in_progress
+    status: complete
   - id: environments_and_docs
     title: Maintenance mode, staging filter, local testing and docs
-    status: pending
-current_plan_phase: thread_lifecycle
+    status: in_progress
+current_plan_phase: environments_and_docs
 gates:
   spec-approval:
     status: approved
@@ -28,7 +28,7 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history:
   - iteration: 1
     plan_phase: import_service
@@ -39,7 +39,7 @@ history:
         file: >-
           D:\CS\projects\ansari-projects\ansari\.builders\spir-321\codev\projects\321-rfc-whatsapp-support-in-the-mo\321-import_service-iter1-claude.txt
 started_at: '2026-10-25T06:51:50.273Z'
-updated_at: '2026-10-25T14:59:15.995Z'
+updated_at: '2026-10-25T16:14:17.697Z'
 context_refreshes:
   - boundary: enter:plan
     at: '2026-10-25T08:08:13.901Z'
@@ -53,3 +53,5 @@ context_refreshes:
   - boundary: plan-phase:thread_lifecycle
     at: '2026-10-25T14:58:53.028Z'
     acknowledged_at: '2026-10-25T14:59:15.993Z'
+  - boundary: plan-phase:environments_and_docs
+    at: '2026-10-25T16:14:17.696Z'
