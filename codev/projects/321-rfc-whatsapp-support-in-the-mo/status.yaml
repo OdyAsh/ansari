@@ -5,17 +5,17 @@ phase: implement
 plan_phases:
   - id: import_service
     title: Import the Python service as is
-    status: in_progress
+    status: complete
   - id: auth_token_exchange
     title: Replace legacy user handling with the apps/auth token exchange
-    status: pending
+    status: in_progress
   - id: thread_lifecycle
     title: One thread per user with expiry
     status: pending
   - id: environments_and_docs
     title: Maintenance mode, staging filter, local testing and docs
     status: pending
-current_plan_phase: import_service
+current_plan_phase: auth_token_exchange
 gates:
   spec-approval:
     status: approved
@@ -27,8 +27,8 @@ gates:
     status: pending
   verify-approval:
     status: pending
-iteration: 2
-build_complete: true
+iteration: 1
+build_complete: false
 history:
   - iteration: 1
     plan_phase: import_service
@@ -39,7 +39,7 @@ history:
         file: >-
           D:\CS\projects\ansari-projects\ansari\.builders\spir-321\codev\projects\321-rfc-whatsapp-support-in-the-mo\321-import_service-iter1-claude.txt
 started_at: '2026-10-25T06:51:50.273Z'
-updated_at: '2026-10-25T10:17:33.965Z'
+updated_at: '2026-10-25T10:21:36.093Z'
 context_refreshes:
   - boundary: enter:plan
     at: '2026-10-25T08:08:13.901Z'
@@ -47,3 +47,5 @@ context_refreshes:
   - boundary: enter:implement
     at: '2026-10-25T08:16:19.523Z'
     acknowledged_at: '2026-10-25T08:16:31.277Z'
+  - boundary: plan-phase:auth_token_exchange
+    at: '2026-10-25T10:21:36.093Z'
