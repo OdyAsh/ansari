@@ -356,11 +356,6 @@ async def main_webhook(
             success=False, message="Message filtered for local development", status_code=202, error_code="DEV_FILTER"
         )
 
-    # Start the typing indicator loop that will continue until message is processed
-    background_tasks.add_task(
-        conversation_manager.send_typing_indicator_then_start_loop,
-    )
-
     # Check if there are more than xx hours have passed from the user's message to the current time
     # If so, send a message to the user and return
     if is_message_too_old(message_unix_time):
@@ -393,6 +388,12 @@ async def main_webhook(
         return create_response_for_meta(
             success=False, message="Unsupported message type handled", status_code=415, error_code="UNSUPPORTED_MESSAGE_TYPE"
         )
+
+    # Start the typing indicator loop that will continue until message is processed. It is only started now,
+    # for text messages the user is signed in for, because only handle_text_message cancels it.
+    background_tasks.add_task(
+        conversation_manager.send_typing_indicator_then_start_loop,
+    )
 
     # Process text messages sent by the WhatsApp user
     background_tasks.add_task(

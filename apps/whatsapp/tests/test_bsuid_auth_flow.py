@@ -34,6 +34,8 @@ def fresh_singletons(monkeypatch):
     # Skip the mock backend's simulated latency
     monkeypatch.setattr("ansari_whatsapp.services.ansari_client_mock.random.uniform", lambda a, b: 0)
     yield
+    reset_ansari_client()
+    reset_auth_client()
 
 
 def _use_transport(monkeypatch, module: str, handler):
@@ -189,6 +191,34 @@ def test_phone_visible_user_is_identified_and_replied_to_by_bsuid_only(monkeypat
     assert tokens_requested == [BSUID]
     assert recipients and set(recipients) == {BSUID}
     assert PHONE not in tokens_requested + recipients
+
+
+def test_no_phone_number_reaches_apps_api(monkeypatch):
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(f"{request.method} {request.url} {dict(request.headers)} {request.content.decode()}")
+        if request.method == "GET":
+            return httpx.Response(200, json=[])
+        if request.url.path == "/api/v2/threads":
+            return httpx.Response(200, json={"thread_id": "t1"})
+        return httpx.Response(200, content=b"answer")
+
+    monkeypatch.setattr(get_settings(), "MOCK_ANSARI_CLIENT", False)
+    _use_transport(monkeypatch, "ansari_whatsapp.services.ansari_client_real", handler)
+
+    response = _post_signed_webhook(_text_message(**{"from": PHONE, "from_user_id": BSUID}))
+
+    assert response.status_code == 200
+    assert len(requests) == 3  # list threads, create thread, send message
+    assert not any(PHONE in r or BSUID in r for r in requests)
+
+
+def test_malformed_token_subject_does_not_raise():
+    # Valid base64 JSON that is not an object, and a payload that is not JSON at all
+    assert get_subject("a.NQ.c") is None
+    assert get_subject("a.bm90LWpzb24.c") is None
+    assert get_subject("not-a-jwt") is None
 
 
 def test_phone_hidden_user_is_answered():

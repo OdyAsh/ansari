@@ -21,7 +21,8 @@ class AuthClientReal(AuthClientBase):
         self.url = f"{settings.AUTH_SERVER_URL.rstrip('/')}{SESSION_PATH}"
         self.client = httpx.AsyncClient(
             headers={API_KEY_HEADER: settings.AUTH_WHATSAPP_API_KEY.get_secret_value()},
-            timeout=15.0,
+            # Awaited before Meta gets its reply (Meta wants a response within ~5s), so keep it short
+            timeout=5.0,
         )
 
     async def close(self) -> None:

@@ -17,5 +17,5 @@ def get_subject(token: str) -> str | None:
         payload = json.loads(base64.urlsafe_b64decode(payload_part))
         sub = payload.get("sub")
         return sub if isinstance(sub, str) else None
-    except (IndexError, ValueError):
+    except (IndexError, ValueError, AttributeError, TypeError):
         return None
