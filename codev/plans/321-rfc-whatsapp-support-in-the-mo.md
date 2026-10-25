@@ -109,7 +109,7 @@ Each user has exactly one thread. If the last activity is older than the global 
 
 - [ ] Message within the expiry reuses the thread and keeps context.
 - [ ] Message after the expiry deletes the old thread and messages and creates a new thread.
-- [ ] A user never ends up with two threads, including when two messages arrive close together (verified in tests, with the behaviour documented).
+- [ ] A user normally has exactly one thread. Two messages arriving back to back right after the expiry could each create one; this is a known, accepted corner case, documented in `_resolve_thread` (owner decision: no lock, and an occasional manual sweep keeps only each WhatsApp user's newest thread).
 
 #### Test Plan
 
@@ -125,10 +125,12 @@ Finish environment behaviour and make the service testable and deployable by oth
 
 #### Files to Create / Modify
 
-- In `apps/whatsapp`: maintenance behaviour driven by the same global flag as `apps/api` (`MAINTENANCE_MODE`) instead of the WhatsApp-specific flag, keeping the notice message; keep the staging `!d ` filter; `README.md` and `tests/README.md` for the app (both still reference legacy files that were not imported).
+- In `apps/whatsapp`: rename the maintenance flag `WHATSAPP_UNDER_MAINTENANCE` to `WA_MAINTENANCE_MODE` (owner decision): it is read from this service's own environment and is independent of `apps/api`'s `MAINTENANCE_MODE`; keep the notice message; keep the staging `!d ` filter; `README.md` and `tests/README.md` for the app (both still reference legacy files that were not imported).
 - Deployment notes: per-environment Meta credentials and secrets, and the deploy steps for staging and production, following the monorepo's existing deployment docs.
 - Findings from the Phase 2 review to resolve here: (a) apps/api reports a failed or empty answer as an inline `Error: ...` at the end of a 200 stream, which the client currently relays to the user unlogged, so detect it, log it and send a failure notice; (b) deploy blocker to confirm before the staging smoke test: the service now requires `from_user_id` in every webhook, and sending to a BSUID (`recipient`) is untested against Meta's live API (Meta's docs disagree on when it is supported), so check the webhook Graph API version and test a real send; (c) `README.md` still documents the six deleted legacy endpoints.
-- Findings from the Phase 3 review to resolve here: (a) the per-user lock only protects the single-replica deployment, so the deployment notes must state that the service runs as exactly one replica (a hosting-dashboard setting, not in the repo); (b) failures of the thread list, create and delete calls are logged but not captured in Sentry, unlike message-processing failures, so add that with the logging work.
+- Findings from the Phase 3 review to resolve here: failures of the thread list, create and delete calls are logged but not captured in Sentry, unlike message-processing failures, so add that with the logging work. (The review's single-replica note no longer applies: the per-user lock was removed by owner decision.)
+- Issues to raise with the `apps/api` owner when the PR is opened, not to fix in this work: (a) the chat routes hard-code `source: 'web'` on every message they save, so WhatsApp messages are labelled `web` even though their thread is `whatsapp`; (b) the answer stream reports a failure as trailing `Error:` text after a 200 response, with no explicit marker (see the `Error:` item above).
+- Housekeeping to document: an occasional manual sweep deleting all but the newest thread of each WhatsApp user (threads with source `whatsapp`).
 - Deploy-path items found in the Phase 1 review: bump the uv version in the `Dockerfile` (it pins 0.5.11 against a newer lockfile format) and make its second `uv sync` use `--frozen`; decide whether to keep `/sentry-debug` and `clean_logs.sh`; ask an admin to make the `whatsapp` CI job a required check on `develop`.
 
 #### Deliverables
@@ -161,7 +163,7 @@ Unit tests for both behaviours. Manual: local run through zrok with `!d `, then 
 |------|-------------|--------|------------|
 | `apps/auth` endpoint is not available when Phase 2 is built | Medium | Medium | Mock auth client; local end to end deferred until it exists |
 | `apps/api` lacks a thread read or delete endpoint needed in Phase 3 | Medium | Medium | Check early in Phase 2; add the smallest change and note it |
-| Concurrent messages create two threads for one user | Medium | Low | Cover in tests and document the chosen behaviour |
+| Concurrent messages create two threads for one user | Low | Low | Accepted without a lock (owner decision); documented in `_resolve_thread`; occasional manual sweep keeps only the newest thread |
 | Imported code carries secrets, logs or personal files | Low | High | Copy only source, tests and config examples; review the diff before committing |
 | Shared test number makes local and staging answer the same message | Medium | Low | `!d ` filter kept and tested |
 

@@ -19,7 +19,7 @@ Affected: all WhatsApp users who currently cannot use Ansari on WhatsApp at all;
 - Users are identified by phone number and stored in the legacy backend as ordinary users (`source = whatsapp`, phone number, preferred language, no email or password).
 - A conversation continues until the user has been silent for 3 hours (global setting), then a new one starts. Old conversations are kept.
 - The answer is produced by the legacy backend's streaming chat, collected in full by the service, converted from markdown to WhatsApp formatting and split into messages of at most 4000 characters.
-- The service has a WhatsApp-specific maintenance flag, and a temporary `!d ` message prefix that lets staging ignore messages meant for a developer's local server (staging and local share one Meta test number).
+- The service has its own maintenance flag, and a temporary `!d ` message prefix that lets staging ignore messages meant for a developer's local server (staging and local share one Meta test number).
 - Each environment (local, staging, production) has its own Meta app credentials.
 - In this monorepo, `apps/api` already provides users, threads, messages, the chat pipeline, client attribution, Sentry and a global `MAINTENANCE_MODE`. It does not receive or verify Meta messages, send replies through Meta, or know WhatsApp identities. Authentication is moving to a central service, `apps/auth`, which issues JWTs that `apps/api` verifies; `apps/api` no longer handles passwords or logins.
 
@@ -32,7 +32,7 @@ Affected: all WhatsApp users who currently cannot use Ansari on WhatsApp at all;
 - Each WhatsApp user has exactly one thread, the current conversation. When a message arrives after the expiry time (3 hours, global), the old thread and its messages are deleted and a new thread starts.
 - Replies are complete messages (WhatsApp cannot stream), produced by aggregating the existing streaming endpoints and split for WhatsApp, as the legacy service does.
 - Meta is always answered "OK" immediately, with no queue or message log table; failures are logged.
-- The existing global `MAINTENANCE_MODE` governs WhatsApp, and users get a maintenance notice on WhatsApp.
+- The WhatsApp service has its own maintenance flag, `WA_MAINTENANCE_MODE`, which is independent of `apps/api`'s `MAINTENANCE_MODE`. While it is on, users get a maintenance notice on WhatsApp.
 - The `!d ` prefix behaviour for staging is preserved.
 
 ## Success Criteria
@@ -45,7 +45,7 @@ Affected: all WhatsApp users who currently cannot use Ansari on WhatsApp at all;
 - [ ] Answers longer than 4000 characters are delivered as multiple messages in order, with WhatsApp-compatible formatting.
 - [ ] Meta always receives a success response immediately for deliveries to our number, and Meta's signature is verified.
 - [ ] Status updates, webhooks for other numbers and unsupported message types do not trigger a chat answer.
-- [ ] With `MAINTENANCE_MODE` on, users receive a maintenance notice and no chat answer.
+- [ ] With `WA_MAINTENANCE_MODE` on, users receive a maintenance notice and no chat answer, whatever `apps/api`'s `MAINTENANCE_MODE` is set to.
 - [ ] In staging, messages starting with `!d ` are ignored; other messages are processed.
 - [ ] No legacy users or threads are migrated.
 - [ ] Unit and integration tests cover the above, using mock Meta and mock backend clients as in the legacy service.
@@ -62,7 +62,7 @@ Baked Decisions (from issue #321; fixed for this spec, not to be re-opened in th
 - **Rate limiting (decision 7):** out of scope, no per-sender limiter in our code.
 - **Deferred to later specs:** data retention for stale users (decision 3), translating the service to TypeScript, and dedicated non-streaming answer endpoints.
 
-Self-made decisions (8 to 11, approved by the author, open to comments): global 3-hour conversation expiry; one thread per user, replaced on expiry; `!d ` prefix kept for staging; reuse of the global `MAINTENANCE_MODE`.
+Self-made decisions (8 to 11, approved by the author, open to comments): global 3-hour conversation expiry; one thread per user, replaced on expiry; `!d ` prefix kept for staging; a WhatsApp maintenance flag, `WA_MAINTENANCE_MODE`, independent of `apps/api`'s.
 
 Other constraints:
 
@@ -125,7 +125,7 @@ Recommended: Approach 1.
 - Status webhook, webhook for another business number, and non-text message: handled without a chat answer (unsupported types get the unsupported notice).
 - Invalid or missing Meta signature: rejected.
 - Webhook verification handshake succeeds with the right token, fails otherwise.
-- `MAINTENANCE_MODE` on: maintenance notice, no chat processing.
+- `WA_MAINTENANCE_MODE` on: maintenance notice, no chat processing, whatever `apps/api`'s `MAINTENANCE_MODE` is.
 - Staging with `!d ` prefix: ignored; without: processed.
 - `apps/auth` unavailable or returns an error: user receives a failure notice, error logged, Meta still answered "OK".
 - `apps/api` error or timeout during streaming: user receives a failure notice, error logged.

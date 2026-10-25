@@ -333,7 +333,7 @@ async def main_webhook(
     )
 
     # Check if the WhatsApp service is enabled
-    if get_settings().WHATSAPP_UNDER_MAINTENANCE:
+    if get_settings().WA_MAINTENANCE_MODE:
         # Inform the user that the service is down for maintenance
         background_tasks.add_task(
             conversation_manager.send_whatsapp_message,

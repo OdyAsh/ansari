@@ -13,7 +13,6 @@ from ansari_whatsapp.services.service_provider import get_ansari_client, reset_a
 from ansari_whatsapp.services.whatsapp_conversation_manager import WhatsAppConversationManager
 from ansari_whatsapp.utils.exceptions import ThreadDeletionError
 from ansari_whatsapp.utils.time_utils import get_retention_time_seconds
-from ansari_whatsapp.utils.user_locks import UserLocks
 
 BSUID = "US.13491208655302741918"
 OTHER_BSUID = "US.99999999999999999999"
@@ -218,90 +217,3 @@ def test_failed_deletion_does_not_create_a_second_thread(monkeypatch):
     assert result is None
     assert _threads_of(manager) == [old]  # still exactly one
     assert sent  # the user was told
-
-
-def test_two_close_messages_after_expiry_leave_exactly_one_thread():
-    first_manager = _manager()
-    second_manager = _manager()
-    old = asyncio.run(first_manager._resolve_thread("hello"))
-    _age_thread(old, EXPIRY + 60)
-
-    async def both():
-        # Slow the mock down so the two messages genuinely overlap
-        monkey_delay = 0.05
-        original = AnsariClientMock.get_last_thread_info
-
-        async def slow_get_last(self, token):
-            result = await original(self, token)
-            await asyncio.sleep(monkey_delay)
-            return result
-
-        AnsariClientMock.get_last_thread_info = slow_get_last
-        try:
-            return await asyncio.gather(
-                first_manager._resolve_thread("message one"), second_manager._resolve_thread("message two")
-            )
-        finally:
-            AnsariClientMock.get_last_thread_info = original
-
-    a, b = asyncio.run(both())
-
-    assert a == b  # the second message reused the thread the first one created
-    assert _threads_of(first_manager) == [a]
-
-
-def test_without_the_lock_two_close_messages_would_create_two_threads(monkeypatch):
-    """Guards the lock test above: if the lock did nothing, that test would not notice."""
-
-    class NoLock(UserLocks):
-        def hold(self, key):
-            from contextlib import asynccontextmanager
-
-            @asynccontextmanager
-            async def noop():
-                yield
-
-            return noop()
-
-    monkeypatch.setattr("ansari_whatsapp.services.whatsapp_conversation_manager.user_locks", NoLock())
-    first_manager = _manager()
-    second_manager = _manager()
-    old = asyncio.run(first_manager._resolve_thread("hello"))
-    _age_thread(old, EXPIRY + 60)
-
-    async def both():
-        original = AnsariClientMock.get_last_thread_info
-
-        async def slow_get_last(self, token):
-            result = await original(self, token)
-            await asyncio.sleep(0.05)
-            return result
-
-        monkeypatch.setattr(AnsariClientMock, "get_last_thread_info", slow_get_last)
-        return await asyncio.gather(
-            first_manager._resolve_thread("message one"), second_manager._resolve_thread("message two")
-        )
-
-    asyncio.run(both())
-
-    assert len(_threads_of(first_manager)) == 2
-
-
-def test_user_locks_are_per_user_and_cleaned_up():
-    locks = UserLocks()
-    order = []
-
-    async def work(key, name, delay):
-        async with locks.hold(key):
-            order.append(f"{name} start")
-            await asyncio.sleep(delay)
-            order.append(f"{name} end")
-
-    async def run():
-        await asyncio.gather(work("a", "a1", 0.05), work("a", "a2", 0.0), work("b", "b1", 0.0))
-
-    asyncio.run(run())
-
-    assert order.index("a1 end") < order.index("a2 start")  # same user: one at a time
-    assert order.index("b1 start") < order.index("a1 end")  # other user: not blocked
-    assert locks._locks == {}  # nothing left behind

@@ -1,6 +1,8 @@
 # Real API Client for ansari-whatsapp
 """Real client implementation for interacting with the Ansari backend API via HTTP."""
 
+import json
+
 import httpx
 
 from loguru import logger
@@ -16,9 +18,6 @@ from ansari_whatsapp.services.ansari_client_base import AnsariClientBase
 
 # Per-client attribution id sent to apps/api (lowercase, per packages/types attribution)
 CLIENT_ID = "askansari-whatsapp"
-
-# The invisible keep-alive character apps/api sends while the model is still thinking
-HEARTBEAT_CHAR = "\u200b"
 
 
 class AnsariClientReal(AnsariClientBase):
@@ -163,8 +162,10 @@ class AnsariClientReal(AnsariClientBase):
         """
         Send a message to apps/api and collect the full streamed answer.
 
-        Uses `POST /api/v2/threads/{id}`, whose body is the raw answer text. While the model is
-        still thinking, apps/api sends invisible zero-width spaces as keep-alives; they are removed.
+        Uses `POST /api/v2/threads/{id}/chat`, a Server-Sent Events stream, the same route the web app uses:
+        lines starting with `:` are keep-alives, and each `data:` line is a JSON event: `text` (a piece of the
+        answer), `tool_call` / `tool_result` (ignored), `error`, and a final `done`. A stream with an `error`
+        event, or one that ends without `done`, is a failure, so a half answer is never passed on as complete.
 
         Args:
             token (str): The user's JWT from apps/auth.
@@ -178,8 +179,8 @@ class AnsariClientReal(AnsariClientBase):
             MessageProcessingError: If message processing fails.
         """
         try:
-            url = f"{self.base_url}/api/v2/threads/{thread_id}"
-            data = {"content": message}
+            url = f"{self.base_url}/api/v2/threads/{thread_id}/chat"
+            data = {"message": message}
 
             # Use stream=True to receive the response as a stream
             async with self.client.stream("POST", url, json=data, headers=self._auth(token)) as response:
@@ -188,12 +189,30 @@ class AnsariClientReal(AnsariClientBase):
                     logger.error(f"Error from backend API: {error_detail}")
                     raise MessageProcessingError(f"Backend returned HTTP {response.status_code}: {error_detail}")
 
-                # Accumulate the full response as we receive chunks
+                # Accumulate the answer from the `text` events
                 full_response = ""
-                async for chunk in response.aiter_text():
-                    # Each chunk is a token from the streaming response
-                    if chunk:
-                        full_response += chunk.replace(HEARTBEAT_CHAR, "")
+                done = False
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue  # keep-alive comments and blank separator lines
+                    try:
+                        event = json.loads(line[len("data:") :])
+                    except ValueError as e:
+                        logger.error("apps/api sent a chat event that is not JSON")
+                        raise MessageProcessingError("Malformed chat event") from e
+                    event_type = event.get("type") if isinstance(event, dict) else None
+                    if event_type == "text":
+                        full_response += event.get("content") or ""
+                    elif event_type == "error":
+                        # The message is apps/api's own text, never user content, so it is safe to log
+                        logger.error(f"apps/api reported a chat error: {event.get('message')}")
+                        raise MessageProcessingError("apps/api reported an error while answering")
+                    elif event_type == "done":
+                        done = True
+
+                if not done:
+                    logger.error("The chat stream from apps/api ended before it was complete")
+                    raise MessageProcessingError("Chat stream ended before completion")
 
                 if not full_response:
                     logger.warning("Received empty response from backend")

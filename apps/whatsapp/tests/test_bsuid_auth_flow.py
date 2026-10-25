@@ -61,6 +61,16 @@ def _post_signed_webhook(message: dict):
     return client.post("/whatsapp/v2", content=body, headers={"X-Hub-Signature-256": f"sha256={signature}"})
 
 
+def _sse(*events: dict, ping: bool = True) -> bytes:
+    """An apps/api `/chat` stream: optional keep-alive comment lines, then one `data:` line per event."""
+    lines = [": ping\n\n"] if ping else []
+    lines += [f"data: {json.dumps(e)}\n\n" for e in events]
+    return "".join(lines).encode("utf-8")
+
+
+ANSWER_STREAM = _sse({"type": "text", "content": "As-salamu "}, {"type": "text", "content": "alaykum"}, {"type": "done"})
+
+
 def _text_message(**ids) -> dict:
     return {"id": "wamid.TEST", "timestamp": str(int(time.time())), "type": "text", "text": {"body": "hello"}, **ids}
 
@@ -126,7 +136,7 @@ def test_mock_auth_same_bsuid_same_user_new_bsuid_new_user():
 # ---------- apps/api client ----------
 
 
-def test_ansari_client_calls_api_with_jwt_and_strips_heartbeats(monkeypatch):
+def test_ansari_client_calls_api_with_jwt_and_reads_the_event_stream(monkeypatch):
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -135,7 +145,16 @@ def test_ansari_client_calls_api_with_jwt_and_strips_heartbeats(monkeypatch):
             return httpx.Response(200, json=[{"thread_id": "t1", "updated_at": "2026-10-25T10:00:00.000Z"}])
         if request.url.path == "/api/v2/threads":
             return httpx.Response(200, json={"thread_id": "t2"})
-        return httpx.Response(200, content="\u200b\u200bAs-salamu \u200balaykum".encode("utf-8"))
+        return httpx.Response(
+            200,
+            content=_sse(
+                {"type": "tool_call", "name": "search_quran"},
+                {"type": "tool_result", "tool": "search_quran", "resultCount": 3},
+                {"type": "text", "content": "As-salamu "},
+                {"type": "text", "content": "alaykum"},
+                {"type": "done"},
+            ),
+        )
 
     _use_transport(monkeypatch, "ansari_whatsapp.services.ansari_client_real", handler)
     ansari = AnsariClientReal()
@@ -147,6 +166,7 @@ def test_ansari_client_calls_api_with_jwt_and_strips_heartbeats(monkeypatch):
     assert last == {"thread_id": "t1", "last_message_time": "2026-10-25T10:00:00.000Z"}
     assert created == {"thread_id": "t2"}
     assert answer == "As-salamu alaykum"
+    assert calls[-1][:2] == ("POST", "/api/v2/threads/t1/chat")
     assert all(auth == "Bearer jwt" for _, _, auth in calls)
 
 
@@ -154,6 +174,55 @@ def test_ansari_client_no_threads_yet(monkeypatch):
     _use_transport(monkeypatch, "ansari_whatsapp.services.ansari_client_real", lambda r: httpx.Response(200, json=[]))
 
     assert asyncio.run(AnsariClientReal().get_last_thread_info("jwt")) == {"thread_id": None, "last_message_time": None}
+
+
+def test_ansari_client_sends_the_message_in_the_chat_body(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, content=ANSWER_STREAM)
+
+    _use_transport(monkeypatch, "ansari_whatsapp.services.ansari_client_real", handler)
+
+    asyncio.run(AnsariClientReal().process_message("jwt", "t1", "hi there"))
+
+    assert seen["body"] == {"message": "hi there"}
+
+
+def test_ansari_client_error_event_is_a_failure_not_an_answer(monkeypatch):
+    # `done` follows the error, so only the error event itself can make this fail (not the missing-done check)
+    stream = _sse({"type": "text", "content": "partial"}, {"type": "error", "message": "model overloaded"}, {"type": "done"})
+    _use_transport(monkeypatch, "ansari_whatsapp.services.ansari_client_real", lambda r: httpx.Response(200, content=stream))
+
+    with pytest.raises(MessageProcessingError):
+        asyncio.run(AnsariClientReal().process_message("jwt", "t1", "hi"))
+
+
+def test_ansari_client_stream_cut_off_before_done_is_a_failure(monkeypatch):
+    stream = _sse({"type": "text", "content": "half an ans"})
+    _use_transport(monkeypatch, "ansari_whatsapp.services.ansari_client_real", lambda r: httpx.Response(200, content=stream))
+
+    with pytest.raises(MessageProcessingError):
+        asyncio.run(AnsariClientReal().process_message("jwt", "t1", "hi"))
+
+
+def test_ansari_client_done_without_text_is_an_empty_answer(monkeypatch):
+    stream = _sse({"type": "done"})
+    _use_transport(monkeypatch, "ansari_whatsapp.services.ansari_client_real", lambda r: httpx.Response(200, content=stream))
+
+    assert asyncio.run(AnsariClientReal().process_message("jwt", "t1", "hi")) == ""
+
+
+def test_ansari_client_malformed_event_is_a_failure(monkeypatch):
+    _use_transport(
+        monkeypatch,
+        "ansari_whatsapp.services.ansari_client_real",
+        lambda r: httpx.Response(200, content=b"data: this is not json\n\n"),
+    )
+
+    with pytest.raises(MessageProcessingError):
+        asyncio.run(AnsariClientReal().process_message("jwt", "t1", "hi"))
 
 
 def test_ansari_client_error_status_raises(monkeypatch):
@@ -202,7 +271,7 @@ def test_no_phone_number_reaches_apps_api(monkeypatch):
             return httpx.Response(200, json=[])
         if request.url.path == "/api/v2/threads":
             return httpx.Response(200, json={"thread_id": "t1"})
-        return httpx.Response(200, content=b"answer")
+        return httpx.Response(200, content=ANSWER_STREAM)
 
     monkeypatch.setattr(get_settings(), "MOCK_ANSARI_CLIENT", False)
     _use_transport(monkeypatch, "ansari_whatsapp.services.ansari_client_real", handler)

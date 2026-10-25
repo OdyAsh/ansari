@@ -85,7 +85,8 @@ class WhatsAppSettings(BaseSettings):
     ORIGINS: str | list[str] = ""
 
     # Chat settings
-    WHATSAPP_UNDER_MAINTENANCE: bool = False
+    # This service's own maintenance switch, independent of apps/api's MAINTENANCE_MODE
+    WA_MAINTENANCE_MODE: bool = False
     WHATSAPP_CHAT_RETENTION_HOURS: int = 3
     WHATSAPP_MESSAGE_AGE_THRESHOLD_SECONDS: int = 86400  # 1 day
 
