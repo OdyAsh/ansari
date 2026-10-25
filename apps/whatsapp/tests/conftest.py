@@ -1,6 +1,6 @@
 import os
 
-# Mock mode and dummy credentials, so the suite runs without a .env or any backend; real values still win.
+# Mock mode and dummy credentials so the suite runs with no backend. Exported env vars win, but a .env value does not.
 for key, value in {
     "DEPLOYMENT_TYPE": "local",
     "MOCK_META_API": "True",

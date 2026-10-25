@@ -127,6 +127,7 @@ Finish environment behaviour and make the service testable and deployable by oth
 
 - In `apps/whatsapp`: maintenance behaviour driven by the same global flag as `apps/api` (`MAINTENANCE_MODE`) instead of the WhatsApp-specific flag, keeping the notice message; keep the staging `!d ` filter; `README.md` and `tests/README.md` for the app (both still reference legacy files that were not imported).
 - Deployment notes: per-environment Meta credentials and secrets, and the deploy steps for staging and production, following the monorepo's existing deployment docs.
+- Deploy-path items found in the Phase 1 review: bump the uv version in the `Dockerfile` (it pins 0.5.11 against a newer lockfile format) and make its second `uv sync` use `--frozen`; decide whether to keep `/sentry-debug` and `clean_logs.sh`; ask an admin to make the `whatsapp` CI job a required check on `develop`.
 
 #### Deliverables
 
