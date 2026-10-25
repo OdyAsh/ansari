@@ -29,6 +29,12 @@ class ThreadCreationError(AnsariClientError):
     pass
 
 
+class ThreadDeletionError(AnsariClientError):
+    """Deleting an expired thread failed."""
+
+    pass
+
+
 class ThreadInfoError(AnsariClientError):
     """Retrieving thread info failed."""
 

@@ -8,6 +8,7 @@ from loguru import logger
 from ansari_whatsapp.utils.config import get_settings
 from ansari_whatsapp.utils.exceptions import (
     ThreadCreationError,
+    ThreadDeletionError,
     ThreadInfoError,
     MessageProcessingError,
 )
@@ -100,6 +101,31 @@ class AnsariClientReal(AnsariClientBase):
         except (KeyError, ValueError) as e:
             logger.error("apps/api returned an unexpected thread-creation response")
             raise ThreadCreationError("Unexpected thread-creation response") from e
+
+    async def delete_thread(self, token: str, thread_id: str) -> None:
+        """
+        Delete a thread and, with it, all of its messages (apps/api cascades the delete).
+
+        A 404 means the thread is already gone, which is the outcome we wanted, so it is not an error.
+
+        Args:
+            token (str): The user's JWT from apps/auth.
+            thread_id (str): The ID of the thread to delete.
+
+        Raises:
+            ThreadDeletionError: If deletion fails.
+        """
+        try:
+            response = await self.client.delete(f"{self.base_url}/api/v2/threads/{thread_id}", headers=self._auth(token))
+            if response.status_code == 404:
+                return
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error deleting thread: {e.response.status_code}")
+            raise ThreadDeletionError(f"Failed to delete thread: HTTP {e.response.status_code}") from e
+        except httpx.RequestError as e:
+            logger.error(f"Network error deleting thread: {type(e).__name__}")
+            raise ThreadDeletionError("Network error during thread deletion") from e
 
     async def get_last_thread_info(self, token: str) -> dict:
         """

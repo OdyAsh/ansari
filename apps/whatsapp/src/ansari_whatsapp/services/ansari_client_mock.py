@@ -12,6 +12,7 @@ from loguru import logger
 from ansari_whatsapp.utils.config import get_settings
 from ansari_whatsapp.utils.exceptions import (
     ThreadCreationError,
+    ThreadDeletionError,
     ThreadInfoError,
     MessageProcessingError,
 )
@@ -46,6 +47,8 @@ def simulate_backend_behavior(
                 if exception_class is None:
                     if "create" in func.__name__:
                         exception_class = ThreadCreationError
+                    elif "delete" in func.__name__:
+                        exception_class = ThreadDeletionError
                     elif "thread" in func.__name__:
                         exception_class = ThreadInfoError
                     elif "message" in func.__name__:
@@ -105,6 +108,20 @@ class AnsariClientMock(AnsariClientBase):
 
         logger.info(f"Mock: Created thread {thread_id}")
         return {"thread_id": thread_id}
+
+    @simulate_backend_behavior()
+    async def delete_thread(self, token: str, thread_id: str) -> None:
+        """Mock thread deletion (its messages go with it). A thread that is already gone is not an error."""
+        user = self._user(token, ThreadDeletionError)
+
+        thread = self._threads.get(thread_id)
+        if thread is None:
+            return
+        if thread["user"] != user:
+            raise ThreadDeletionError("Thread access denied")
+
+        del self._threads[thread_id]
+        logger.info(f"Mock: Deleted thread {thread_id}")
 
     @simulate_backend_behavior()
     async def get_last_thread_info(self, token: str) -> dict:

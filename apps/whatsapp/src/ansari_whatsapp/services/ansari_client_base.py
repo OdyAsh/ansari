@@ -28,6 +28,21 @@ class AnsariClientBase(ABC):
         pass
 
     @abstractmethod
+    async def delete_thread(self, token: str, thread_id: str) -> None:
+        """Delete a thread and, with it, all of its messages.
+
+        Deleting a thread that is already gone is not an error.
+
+        Args:
+            token (str): The user's JWT from apps/auth.
+            thread_id (str): The ID of the thread to delete.
+
+        Raises:
+            ThreadDeletionError: If deletion fails.
+        """
+        pass
+
+    @abstractmethod
     async def get_last_thread_info(self, token: str) -> dict:
         """Get information about the user's most recently active thread.
 

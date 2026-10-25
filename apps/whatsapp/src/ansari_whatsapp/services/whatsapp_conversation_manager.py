@@ -15,10 +15,12 @@ from ansari_whatsapp.utils.app_logger import request_id_var, user_id_var
 from ansari_whatsapp.utils.exceptions import (
     AuthTokenError,
     ThreadCreationError,
+    ThreadDeletionError,
     ThreadInfoError,
     MessageProcessingError,
 )
 from ansari_whatsapp.utils.token_utils import get_subject
+from ansari_whatsapp.utils.user_locks import user_locks
 from ansari_whatsapp.utils.time_utils import calculate_time_passed, get_retention_time_seconds
 from ansari_whatsapp.presenters.whatsapp_message_formatter import format_for_whatsapp
 from ansari_whatsapp.utils.whatsapp_message_splitter import split_message
@@ -176,6 +178,68 @@ class WhatsAppConversationManager:
         except Exception as e:
             logger.exception(f"Error sending WhatsApp message: {e}")
 
+    async def _resolve_thread(self, first_message: str) -> str | None:
+        """Return the id of the user's one current thread, replacing it if it has expired.
+
+        Each user has exactly one thread. If the last message is older than the expiry time, the old thread and
+        its messages are deleted and a new thread starts. Messages from different users never wait for each other.
+
+        This runs under the user's lock, so two messages arriving close together cannot both see an expired thread
+        and create two. The lock is in this process's memory, so it only protects a single running instance of the
+        service. That is the deliberate deployment (spec 321: WhatsApp traffic is not expected to need more than
+        one instance); with several instances it would have to move to a shared place such as a database lock.
+
+        Args:
+            first_message (str): The incoming text, used to title a new thread.
+
+        Returns:
+            str | None: The thread id, or None if the user was already told that something failed.
+        """
+        async with user_locks.hold(get_subject(self.token) or self.bsuid):
+            try:
+                last_thread_info = await self.ansari_client.get_last_thread_info(self.token)
+            except ThreadInfoError as e:
+                logger.error(f"Failed to get thread info: {e}")
+                await self.send_whatsapp_message(
+                    "Sorry, we're having trouble accessing your chat history. Please try again later."
+                )
+                return None
+
+            thread_id = last_thread_info.get("thread_id")
+            last_msg_time = last_thread_info.get("last_message_time")
+            if last_msg_time and isinstance(last_msg_time, str):
+                last_msg_time = datetime.fromisoformat(last_msg_time.replace("Z", "+00:00"))
+
+            passed_time, passed_time_logging = calculate_time_passed(last_msg_time)
+            logger.debug(f"Time passed since user's last whatsapp message: {passed_time_logging}")
+
+            if thread_id is not None and passed_time <= get_retention_time_seconds():
+                return thread_id
+
+            if thread_id is not None:
+                try:
+                    await self.ansari_client.delete_thread(self.token, thread_id)
+                    logger.info("Deleted the user's expired thread")
+                except ThreadDeletionError as e:
+                    # Keep one thread per user: do not start a second one next to an expired thread we could not delete
+                    logger.error(f"Failed to delete the expired thread: {e}")
+                    await self.send_whatsapp_message(
+                        "An unexpected error occurred while starting a new chat session. Please try again later."
+                    )
+                    return None
+
+            try:
+                result = await self.ansari_client.create_thread(self.token, " ".join(first_message.split()[:6]))
+            except ThreadCreationError as e:
+                logger.error(f"Failed to create thread: {e}")
+                await self.send_whatsapp_message(
+                    "An unexpected error occurred while creating a new chat session. Please try again later."
+                )
+                return None
+
+            logger.info("Created a new thread for the whatsapp user")
+            return result.get("thread_id")
+
     async def handle_text_message(self) -> None:
         """Process an incoming text message and send a response to the WhatsApp sender."""
         if not self.bsuid or not self.token:
@@ -186,43 +250,11 @@ class WhatsAppConversationManager:
             incoming_txt_msg = self.incoming_msg_body["body"]
             logger.debug(f"Whatsapp user sent a text message ({len(incoming_txt_msg)} characters)")
 
-            # Get details of the thread that the user last interacted with
-            try:
-                last_thread_info = await self.ansari_client.get_last_thread_info(self.token)
-                thread_id = last_thread_info.get("thread_id")
-                last_msg_time = last_thread_info.get("last_message_time")
-            except ThreadInfoError as e:
-                logger.error(f"Failed to get thread info: {e}")
-                await self.send_whatsapp_message(
-                    "Sorry, we're having trouble accessing your chat history. Please try again later."
-                )
+            thread_id = await self._resolve_thread(incoming_txt_msg)
+            if thread_id is None:
+                if self.typing_indicator_task and not self.typing_indicator_task.done():
+                    self.typing_indicator_task.cancel()
                 return
-
-            if last_msg_time and isinstance(last_msg_time, str):
-                last_msg_time = datetime.fromisoformat(last_msg_time.replace("Z", "+00:00"))
-
-            # Calculate the time passed since the last message
-            passed_time, passed_time_logging = calculate_time_passed(last_msg_time)
-            logger.debug(f"Time passed since user's last whatsapp message: {passed_time_logging}")
-
-            # Get the allowed retention time
-            allowed_time = get_retention_time_seconds()
-
-            # Create a new thread if no threads have been previously created,
-            # or the last message has passed the allowed retention time
-            if thread_id is None or passed_time > allowed_time:
-                first_few_words = " ".join(incoming_txt_msg.split()[:6])
-
-                try:
-                    result = await self.ansari_client.create_thread(self.token, first_few_words)
-                    thread_id = result.get("thread_id")
-                    logger.info("Created a new thread for the whatsapp user, " + "as the allowed retention time has passed.")
-                except ThreadCreationError as e:
-                    logger.error(f"Failed to create thread: {e}")
-                    await self.send_whatsapp_message(
-                        "An unexpected error occurred while creating a new chat session. Please try again later."
-                    )
-                    return
 
             # Process the message using the Ansari backend API
             try:
