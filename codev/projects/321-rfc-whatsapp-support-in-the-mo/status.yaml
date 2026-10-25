@@ -1,9 +1,21 @@
 id: '321'
 title: rfc-whatsapp-support-in-the-mo
 protocol: spir
-phase: plan
-plan_phases: []
-current_plan_phase: null
+phase: implement
+plan_phases:
+  - id: import_service
+    title: Import the Python service as is
+    status: in_progress
+  - id: auth_token_exchange
+    title: Replace legacy user handling with the apps/auth token exchange
+    status: pending
+  - id: thread_lifecycle
+    title: One thread per user with expiry
+    status: pending
+  - id: environments_and_docs
+    title: Maintenance mode, staging filter, local testing and docs
+    status: pending
+current_plan_phase: import_service
 gates:
   spec-approval:
     status: approved
@@ -16,11 +28,13 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history: []
 started_at: '2026-10-25T06:51:50.273Z'
-updated_at: '2026-10-25T08:16:16.106Z'
+updated_at: '2026-10-25T08:16:19.525Z'
 context_refreshes:
   - boundary: enter:plan
     at: '2026-10-25T08:08:13.901Z'
     acknowledged_at: '2026-10-25T08:08:22.211Z'
+  - boundary: enter:implement
+    at: '2026-10-25T08:16:19.523Z'
