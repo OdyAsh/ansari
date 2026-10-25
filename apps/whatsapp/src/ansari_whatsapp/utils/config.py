@@ -41,10 +41,11 @@ class WhatsAppSettings(BaseSettings):
         extra="ignore",
     )
 
-    ########## ansari-backend's settings ##########
+    ########## apps/api and apps/auth settings ##########
 
-    BACKEND_SERVER_URL: str = "http://localhost:8000"
-    WHATSAPP_SERVICE_API_KEY: SecretStr  # Shared secret for service-to-service authentication
+    BACKEND_SERVER_URL: str = "http://localhost:3000"  # apps/api (base URL, no path)
+    AUTH_SERVER_URL: str = "http://localhost:3100"  # apps/auth (base URL, no path)
+    AUTH_WHATSAPP_API_KEY: SecretStr  # Authenticates this service to apps/auth's /whatsapp endpoint
 
     ########### Meta Business API settings ###########
 
@@ -95,6 +96,7 @@ class WhatsAppSettings(BaseSettings):
     # Service Provider settings
     SENTRY_DSN: HttpUrl | None = None
     MOCK_ANSARI_CLIENT: bool = False
+    MOCK_AUTH_CLIENT: bool = False
     MOCK_META_API: bool = False
 
     ########### Validators ###########

@@ -12,42 +12,11 @@ class AnsariClientBase(ABC):
     """
 
     @abstractmethod
-    async def register_user(self, phone_num: str, preferred_language: str) -> dict:
-        """Register a new WhatsApp user with the Ansari backend.
+    async def create_thread(self, token: str, title: str) -> dict:
+        """Create a new thread for the user that this JWT belongs to.
 
         Args:
-            phone_num (str): The user's WhatsApp phone number.
-            preferred_language (str): The user's preferred language.
-
-        Returns:
-            dict: The registration result with format {"status": "success", "user_id": "..."}
-
-        Raises:
-            UserRegistrationError: If the registration fails.
-        """
-        pass
-
-    @abstractmethod
-    async def check_user_exists(self, phone_num: str) -> str:
-        """Get user ID for a WhatsApp phone number.
-
-        Args:
-            phone_num (str): The user's WhatsApp phone number.
-
-        Returns:
-            str: The user's ID
-
-        Raises:
-            UserExistsCheckError: If the user is not found or the check fails.
-        """
-        pass
-
-    @abstractmethod
-    async def create_thread(self, phone_num: str, title: str) -> dict:
-        """Create a new thread for a WhatsApp user in the Ansari backend.
-
-        Args:
-            phone_num (str): The user's WhatsApp phone number.
+            token (str): The user's JWT from apps/auth.
             title (str): The title of the thread.
 
         Returns:
@@ -59,30 +28,15 @@ class AnsariClientBase(ABC):
         pass
 
     @abstractmethod
-    async def get_thread_history(self, phone_num: str, thread_id: str) -> dict:
-        """Get the message history for a WhatsApp user's thread from the Ansari backend.
+    async def get_last_thread_info(self, token: str) -> dict:
+        """Get information about the user's most recently active thread.
 
         Args:
-            phone_num (str): The user's WhatsApp phone number.
-            thread_id (str): The ID of the thread.
+            token (str): The user's JWT from apps/auth.
 
         Returns:
-            dict: The thread history with messages.
-
-        Raises:
-            ThreadHistoryError: If retrieving thread history fails.
-        """
-        pass
-
-    @abstractmethod
-    async def get_last_thread_info(self, phone_num: str) -> dict:
-        """Get information about the last active thread for a WhatsApp user.
-
-        Args:
-            phone_num (str): The user's WhatsApp phone number.
-
-        Returns:
-            dict: The thread info with format {"thread_id": "...", "last_message_time": "..."}
+            dict: The thread info with format {"thread_id": "...", "last_message_time": "..."};
+                both values are None if the user has no thread yet.
 
         Raises:
             ThreadInfoError: If retrieving thread info fails.
@@ -90,11 +44,11 @@ class AnsariClientBase(ABC):
         pass
 
     @abstractmethod
-    async def process_message(self, phone_num: str, thread_id: str, message: str) -> str:
-        """Process a message from a WhatsApp user with the Ansari backend.
+    async def process_message(self, token: str, thread_id: str, message: str) -> str:
+        """Send a message to apps/api and collect the full streamed answer.
 
         Args:
-            phone_num (str): The user's WhatsApp phone number.
+            token (str): The user's JWT from apps/auth.
             thread_id (str): The ID of the thread.
             message (str): The message to process.
 

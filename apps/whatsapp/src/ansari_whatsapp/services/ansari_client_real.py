@@ -7,14 +7,17 @@ from loguru import logger
 
 from ansari_whatsapp.utils.config import get_settings
 from ansari_whatsapp.utils.exceptions import (
-    UserRegistrationError,
-    UserExistsCheckError,
     ThreadCreationError,
-    ThreadHistoryError,
     ThreadInfoError,
     MessageProcessingError,
 )
 from ansari_whatsapp.services.ansari_client_base import AnsariClientBase
+
+# Per-client attribution id sent to apps/api (lowercase, per packages/types attribution)
+CLIENT_ID = "askansari-whatsapp"
+
+# The invisible keep-alive character apps/api sends while the model is still thinking
+HEARTBEAT_CHAR = "\u200b"
 
 
 class AnsariClientReal(AnsariClientBase):
@@ -41,15 +44,18 @@ class AnsariClientReal(AnsariClientBase):
         self.settings = get_settings()
         self.base_url = self.settings.BACKEND_SERVER_URL
 
-        # Create persistent HTTP client with authentication headers
-        # All requests will automatically include these headers
+        # Persistent HTTP client; the user's JWT is added per request, since each user has their own
         self.client = httpx.AsyncClient(
             headers={
-                "X-Whatsapp-Api-Key": self.settings.WHATSAPP_SERVICE_API_KEY.get_secret_value(),
+                "X-Ansari-Client": CLIENT_ID,
                 "Content-Type": "application/json",
             },
             timeout=60.0,  # Default timeout for all requests
         )
+
+    @staticmethod
+    def _auth(token: str) -> dict:
+        return {"Authorization": f"Bearer {token}"}
 
     async def close(self):
         """Close the HTTP client connection and release resources.
@@ -63,74 +69,12 @@ class AnsariClientReal(AnsariClientBase):
         """
         await self.client.aclose()
 
-    async def register_user(self, phone_num: str, preferred_language: str) -> dict:
+    async def create_thread(self, token: str, title: str) -> dict:
         """
-        Register a new WhatsApp user with the Ansari backend.
+        Create a new thread for the user that this JWT belongs to.
 
         Args:
-            phone_num (str): The user's WhatsApp phone number.
-            preferred_language (str): The user's preferred language.
-
-        Returns:
-            dict: The registration result.
-
-        Raises:
-            UserRegistrationError: If the registration fails.
-        """
-        try:
-            response = await self.client.post(
-                f"{self.base_url}/whatsapp/v2/users/register",
-                json={
-                    "phone_num": phone_num,
-                    "preferred_language": preferred_language,
-                },
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error registering user {phone_num}: {e.response.status_code}")
-            raise UserRegistrationError(f"Failed to register user: HTTP {e.response.status_code}") from e
-        except httpx.RequestError as e:
-            logger.error(f"Network error registering user {phone_num}: {e}")
-            raise UserRegistrationError("Network error during registration") from e
-
-    async def check_user_exists(self, phone_num: str) -> str:
-        """
-        Get user ID for a WhatsApp phone number.
-
-        Args:
-            phone_num (str): The user's WhatsApp phone number.
-
-        Returns:
-            str: The user's ID
-
-        Raises:
-            UserExistsCheckError: If the user is not found or the check fails.
-        """
-        try:
-            response = await self.client.get(
-                f"{self.base_url}/whatsapp/v2/users/exists",
-                params={"phone_num": phone_num},
-            )
-            response.raise_for_status()
-            user_id = response.json()
-            return user_id
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                logger.debug(f"User {phone_num} not found (404)")
-                raise UserExistsCheckError("User not found") from e
-            logger.error(f"HTTP error getting user ID for {phone_num}: {e.response.status_code}")
-            raise UserExistsCheckError(f"Failed to get user ID: HTTP {e.response.status_code}") from e
-        except httpx.RequestError as e:
-            logger.error(f"Network error getting user ID for {phone_num}: {e}")
-            raise UserExistsCheckError("Network error during user ID retrieval") from e
-
-    async def create_thread(self, phone_num: str, title: str) -> dict:
-        """
-        Create a new thread for a WhatsApp user in the Ansari backend.
-
-        Args:
-            phone_num (str): The user's WhatsApp phone number.
+            token (str): The user's JWT from apps/auth.
             title (str): The title of the thread.
 
         Returns:
@@ -141,80 +85,63 @@ class AnsariClientReal(AnsariClientBase):
         """
         try:
             response = await self.client.post(
-                f"{self.base_url}/whatsapp/v2/threads",
-                json={"phone_num": phone_num, "title": title},
+                f"{self.base_url}/api/v2/threads",
+                json={"name": title, "source": "whatsapp"},
+                headers=self._auth(token),
             )
             response.raise_for_status()
-            return response.json()
+            return {"thread_id": response.json()["thread_id"]}
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error creating thread for {phone_num}: {e.response.status_code}")
+            logger.error(f"HTTP error creating thread: {e.response.status_code}")
             raise ThreadCreationError(f"Failed to create thread: HTTP {e.response.status_code}") from e
         except httpx.RequestError as e:
-            logger.error(f"Network error creating thread for {phone_num}: {e}")
+            logger.error(f"Network error creating thread: {type(e).__name__}")
             raise ThreadCreationError("Network error during thread creation") from e
+        except (KeyError, ValueError) as e:
+            logger.error("apps/api returned an unexpected thread-creation response")
+            raise ThreadCreationError("Unexpected thread-creation response") from e
 
-    async def get_thread_history(self, phone_num: str, thread_id: str) -> dict:
+    async def get_last_thread_info(self, token: str) -> dict:
         """
-        Get the message history for a WhatsApp user's thread from the Ansari backend.
+        Get information about the user's most recently active thread.
+
+        apps/api lists a user's threads newest-first by `updated_at`, which it bumps on every message.
 
         Args:
-            phone_num (str): The user's WhatsApp phone number.
-            thread_id (str): The ID of the thread.
+            token (str): The user's JWT from apps/auth.
 
         Returns:
-            dict: The thread history.
-
-        Raises:
-            ThreadHistoryError: If retrieving thread history fails.
-        """
-        try:
-            response = await self.client.get(
-                f"{self.base_url}/whatsapp/v2/threads/{thread_id}/history",
-                params={"phone_num": phone_num},
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error getting thread history for {phone_num}: {e.response.status_code}")
-            raise ThreadHistoryError(f"Failed to get thread history: HTTP {e.response.status_code}") from e
-        except httpx.RequestError as e:
-            logger.error(f"Network error getting thread history for {phone_num}: {e}")
-            raise ThreadHistoryError("Network error during thread history retrieval") from e
-
-    async def get_last_thread_info(self, phone_num: str) -> dict:
-        """
-        Get information about the last active thread for a WhatsApp user.
-
-        Args:
-            phone_num (str): The user's WhatsApp phone number.
-
-        Returns:
-            dict: The thread info with thread_id and last_message_time.
+            dict: The thread info with thread_id and last_message_time (both None if no thread yet).
 
         Raises:
             ThreadInfoError: If retrieving thread info fails.
         """
         try:
-            response = await self.client.get(
-                f"{self.base_url}/whatsapp/v2/threads/last",
-                params={"phone_num": phone_num},
-            )
+            response = await self.client.get(f"{self.base_url}/api/v2/threads", headers=self._auth(token))
             response.raise_for_status()
-            return response.json()
+            threads = response.json()
+            if not threads:
+                return {"thread_id": None, "last_message_time": None}
+            return {"thread_id": threads[0]["thread_id"], "last_message_time": threads[0]["updated_at"]}
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error getting last thread info for {phone_num}: {e.response.status_code}")
+            logger.error(f"HTTP error getting last thread info: {e.response.status_code}")
             raise ThreadInfoError(f"Failed to get last thread info: HTTP {e.response.status_code}") from e
         except httpx.RequestError as e:
-            logger.error(f"Network error getting last thread info for {phone_num}: {e}")
+            logger.error(f"Network error getting last thread info: {type(e).__name__}")
             raise ThreadInfoError("Network error during thread info retrieval") from e
+        except (KeyError, ValueError, TypeError) as e:
+            logger.error("apps/api returned an unexpected thread-list response")
+            raise ThreadInfoError("Unexpected thread-list response") from e
 
-    async def process_message(self, phone_num: str, thread_id: str, message: str) -> str:
+    async def process_message(self, token: str, thread_id: str, message: str) -> str:
         """
-        Process a message from a WhatsApp user with the Ansari backend.
-        This method streams the response from the backend to avoid timeout issues.
+        Send a message to apps/api and collect the full streamed answer.
+
+        Uses `POST /api/v2/threads/{id}`, whose body is the raw answer text. While the model is
+        still thinking, apps/api sends invisible zero-width spaces as keep-alives; they are removed.
 
         Args:
-            phone_num (str): The user's WhatsApp phone number.
+            token (str): The user's JWT from apps/auth.
             thread_id (str): The ID of the thread.
             message (str): The message to process.
 
@@ -225,16 +152,11 @@ class AnsariClientReal(AnsariClientBase):
             MessageProcessingError: If message processing fails.
         """
         try:
-            url = f"{self.base_url}/whatsapp/v2/messages/process"
-            data = {
-                "phone_num": phone_num,
-                "thread_id": thread_id,
-                "message": message,
-            }
+            url = f"{self.base_url}/api/v2/threads/{thread_id}"
+            data = {"content": message}
 
             # Use stream=True to receive the response as a stream
-            # Note: self.client already has auth headers and default timeout configured
-            async with self.client.stream("POST", url, json=data) as response:
+            async with self.client.stream("POST", url, json=data, headers=self._auth(token)) as response:
                 if response.status_code != 200:
                     error_detail = await response.aread()
                     logger.error(f"Error from backend API: {error_detail}")
@@ -245,7 +167,7 @@ class AnsariClientReal(AnsariClientBase):
                 async for chunk in response.aiter_text():
                     # Each chunk is a token from the streaming response
                     if chunk:
-                        full_response += chunk
+                        full_response += chunk.replace(HEARTBEAT_CHAR, "")
 
                 if not full_response:
                     logger.warning("Received empty response from backend")
@@ -271,14 +193,14 @@ class AnsariClientReal(AnsariClientBase):
 
                 return full_response
         except httpx.TimeoutException as e:
-            logger.error(f"Timeout processing message for {phone_num}: {e}")
+            logger.error(f"Timeout processing message: {e}")
             raise MessageProcessingError("Request timed out while processing message") from e
         except httpx.RequestError as e:
-            logger.error(f"Network error processing message for {phone_num}: {e}")
+            logger.error(f"Network error processing message: {type(e).__name__}")
             raise MessageProcessingError("Network error during message processing") from e
         except MessageProcessingError:
             # Re-raise our custom exception without wrapping
             raise
         except Exception as e:
-            logger.error(f"Unexpected error processing message for {phone_num}: {e}")
-            raise MessageProcessingError(f"Unexpected error: {str(e)}") from e
+            logger.error(f"Unexpected error processing message: {type(e).__name__}")
+            raise MessageProcessingError(f"Unexpected error: {type(e).__name__}") from e

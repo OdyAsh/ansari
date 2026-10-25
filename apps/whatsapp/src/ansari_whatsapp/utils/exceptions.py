@@ -11,12 +11,10 @@ class UnexpectedMetaPayloadError(Exception):
         self.reply_to = reply_to
 
 
-class PhoneHiddenUserError(Exception):
-    """Sender's webhook has a BSUID but no phone number (WhatsApp username privacy)."""
+class AuthTokenError(Exception):
+    """Exchanging a BSUID for a JWT with apps/auth failed."""
 
-    def __init__(self, bsuid: str):
-        super().__init__("Message sender did not share a phone number (BSUID only)")
-        self.bsuid = bsuid
+    pass
 
 
 class AnsariClientError(Exception):
@@ -25,26 +23,8 @@ class AnsariClientError(Exception):
     pass
 
 
-class UserRegistrationError(AnsariClientError):
-    """User registration failed."""
-
-    pass
-
-
-class UserExistsCheckError(AnsariClientError):
-    """Checking if user exists failed."""
-
-    pass
-
-
 class ThreadCreationError(AnsariClientError):
     """Thread creation failed."""
-
-    pass
-
-
-class ThreadHistoryError(AnsariClientError):
-    """Retrieving thread history failed."""
 
     pass
 

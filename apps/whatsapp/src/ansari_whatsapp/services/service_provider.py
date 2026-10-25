@@ -1,5 +1,5 @@
 # Service Provider for ansari-whatsapp
-"""Factory function for providing the appropriate Ansari client implementation."""
+"""Factory functions for providing the apps/api and apps/auth client implementations."""
 
 from typing import Optional
 from loguru import logger
@@ -8,36 +8,22 @@ from ansari_whatsapp.utils.config import get_settings
 from ansari_whatsapp.services.ansari_client_base import AnsariClientBase
 from ansari_whatsapp.services.ansari_client_real import AnsariClientReal
 from ansari_whatsapp.services.ansari_client_mock import AnsariClientMock
+from ansari_whatsapp.services.auth_client_base import AuthClientBase
+from ansari_whatsapp.services.auth_client_real import AuthClientReal
+from ansari_whatsapp.services.auth_client_mock import AuthClientMock
 
 
-# Singleton instance - shared across the entire application
+# Singleton instances - shared across the entire application
 _ansari_client_instance: Optional[AnsariClientBase] = None
+_auth_client_instance: Optional[AuthClientBase] = None
 
 
 def get_ansari_client() -> AnsariClientBase:
-    """Factory function that returns THE SAME Ansari client instance (singleton).
+    """Return THE SAME apps/api client instance (singleton).
 
-    This function implements the Singleton Service Provider pattern, ensuring only one
-    client instance exists across the application. This enables:
-    - Proper resource management (single connection pool)
-    - Efficient cleanup during application shutdown
-    - Consistent client state across all requests
-
-    The singleton can be one of:
-    - AnsariClientReal: Makes actual HTTP calls to the backend (production/integration testing)
-    - AnsariClientMock: Simulates backend responses without network calls (unit testing/offline dev)
-
-    The choice is controlled by the MOCK_ANSARI_CLIENT environment variable, evaluated
-    only on first call (subsequent calls return the existing instance).
-
-    Returns:
-        AnsariClientBase: The singleton instance (AnsariClientReal or AnsariClientMock)
-
-    Example:
-        >>> client = get_ansari_client()  # Creates singleton
-        >>> result = await client.register_user("+1234567890", "en")
-        >>> client2 = get_ansari_client()  # Returns same instance
-        >>> assert client is client2  # True
+    A singleton keeps one connection pool and gives tests and the mock a consistent state.
+    The choice between the real and mock client is controlled by MOCK_ANSARI_CLIENT and
+    evaluated only on first call.
 
     Note:
         For test isolation, use reset_ansari_client() to clear the singleton between tests.
@@ -45,9 +31,7 @@ def get_ansari_client() -> AnsariClientBase:
     global _ansari_client_instance
 
     if _ansari_client_instance is None:
-        settings = get_settings()
-
-        if settings.MOCK_ANSARI_CLIENT:
+        if get_settings().MOCK_ANSARI_CLIENT:
             logger.info("Service Provider: Creating AnsariClientMock singleton")
             _ansari_client_instance = AnsariClientMock()
         else:
@@ -57,23 +41,34 @@ def get_ansari_client() -> AnsariClientBase:
     return _ansari_client_instance
 
 
-def reset_ansari_client() -> None:
-    """Reset the Ansari client singleton instance.
+def get_auth_client() -> AuthClientBase:
+    """Return THE SAME apps/auth client instance (singleton).
 
-    This function clears the singleton instance, allowing a fresh client to be created
-    on the next call to get_ansari_client(). This is primarily used for test isolation
-    to ensure each test gets a fresh client instance.
-
-    Usage in tests:
-        >>> @pytest.fixture(autouse=True)
-        >>> def reset_client():
-        >>>     reset_ansari_client()  # Reset before each test
-        >>>     yield
-
-    Warning:
-        This should NOT be called in production code. It's intended only for test fixtures
-        to ensure proper test isolation.
+    The choice between the real and mock client is controlled by MOCK_AUTH_CLIENT and
+    evaluated only on first call. Use reset_auth_client() for test isolation.
     """
+    global _auth_client_instance
+
+    if _auth_client_instance is None:
+        if get_settings().MOCK_AUTH_CLIENT:
+            logger.info("Service Provider: Creating AuthClientMock singleton")
+            _auth_client_instance = AuthClientMock()
+        else:
+            logger.debug("Service Provider: Creating AuthClientReal singleton")
+            _auth_client_instance = AuthClientReal()
+
+    return _auth_client_instance
+
+
+def reset_ansari_client() -> None:
+    """Reset the apps/api client singleton (for test fixtures only; not for production code)."""
     global _ansari_client_instance
     _ansari_client_instance = None
     logger.debug("Service Provider: Ansari client singleton reset")
+
+
+def reset_auth_client() -> None:
+    """Reset the apps/auth client singleton (for test fixtures only; not for production code)."""
+    global _auth_client_instance
+    _auth_client_instance = None
+    logger.debug("Service Provider: Auth client singleton reset")

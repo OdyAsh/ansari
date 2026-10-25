@@ -260,6 +260,8 @@ def test_webhook_message_basic(settings):
                                         # If you're testing locally and want to see messages get sent successfully
                                         # to Meta's server, temporarily update this value with your actual phone number
                                         "from": "201234567899",
+                                        # Meta always sends the BSUID; the service identifies users by it alone
+                                        "from_user_id": "US.13491208655302741918",
                                         # NOTE: Using hardcoded test message ID from Meta's sample webhook payloads.
                                         # This works with MOCK_META_API=True (which is the default for CI/CD).
                                         # Real message IDs have a ~30 day lifetime before becoming invalid.
@@ -390,7 +392,7 @@ def test_webhook_rejects_wrong_signature(settings):
 
 @pytest.mark.integration
 def test_webhook_phone_hidden_user(settings):
-    """A BSUID-only sender (no `from`) gets the phone-number notice and is not processed."""
+    """A BSUID-only sender (no `from`) is processed like any other user."""
     message = {
         "from_user_id": "US.13491208655302741918",
         "id": "wamid.TEST_PHONE_HIDDEN",
@@ -402,7 +404,8 @@ def test_webhook_phone_hidden_user(settings):
 
     response = _post_signed_webhook(settings, message, contacts)
 
-    assert response.json()["error_code"] == "PHONE_HIDDEN_USER"
+    assert response.status_code == 200
+    assert response.json()["success"] is True
 
 
 @pytest.mark.integration

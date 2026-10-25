@@ -31,7 +31,7 @@ from ansari_whatsapp.utils.whatsapp_webhook_utils import (
 from ansari_whatsapp.utils.app_logger import logger, request_id_var, user_id_var
 from ansari_whatsapp.utils.time_utils import is_message_too_old
 from ansari_whatsapp.utils.config import get_settings
-from ansari_whatsapp.utils.exceptions import PhoneHiddenUserError, UnexpectedMetaPayloadError
+from ansari_whatsapp.utils.exceptions import UnexpectedMetaPayloadError
 from ansari_whatsapp.utils.general_helpers import CORSMiddlewareWithLogging
 
 
@@ -198,7 +198,7 @@ async def main_webhook(
     **Processing Flow:**
     1. **Verify Signature**: Validates X-Hub-Signature-256 header to ensure request is from Meta
     2. **Extract Message Details**: Parses the webhook payload to extract relevant information
-       (sender phone number, message type, message body, timestamps, etc.)
+       (sender BSUID, message type, message body, timestamps, etc.)
 
     3. **Validation Checks** (returns early if conditions met):
        - Verifies the webhook is for our WhatsApp business number
@@ -206,7 +206,7 @@ async def main_webhook(
        - Checks if service is under maintenance
        - Handles staging/local development routing (temporary workaround)
        - Validates message age (rejects messages older than configured threshold)
-       - Verifies user registration status
+       - Authenticates the user through apps/auth
        - Filters unsupported message types (non-text messages)
 
     4. **Background Processing**:
@@ -219,7 +219,7 @@ async def main_webhook(
     - Maintenance mode: Sends maintenance message and returns 200
     - Staging filter: Returns 200 if message prefixed with "!d" in staging
     - Old message: Returns 200 after notifying user
-    - Registration failure: Returns 500 error response
+    - Authentication failure: Returns 500 error response
     - Unsupported media: Sends unsupported message and returns 200
 
     **Meta Webhook Compliance:**
@@ -254,7 +254,7 @@ async def main_webhook(
         (
             is_status,
             is_target_business_number,
-            from_whatsapp_number,
+            bsuid,
             incoming_msg_type,
             incoming_msg_body,
             message_id,
@@ -278,22 +278,7 @@ async def main_webhook(
                 success=True, message="Status message processed (ignored)", error_code="STATUS_MESSAGE"
             )
 
-        logger.debug(f"Incoming whatsapp webhook message from {from_whatsapp_number}")
-    except PhoneHiddenUserError as e:
-        logger.warning(f"{e}; sending a notice instead of processing the message")
-        notifier = WhatsAppConversationManager(user_phone_num=e.bsuid)
-        background_tasks.add_task(
-            notifier.send_whatsapp_message,
-            "Apologies, but Ansari is currently running an old implementation which requires you to have "
-            "your phone number sent to it (not just your username), so either adjust your WhatsApp privacy "
-            "settings or wait for our new Ansari release, which will take some time.",
-        )
-        return create_response_for_meta(
-            success=False,
-            message="Sender did not share a phone number",
-            status_code=422,
-            error_code="PHONE_HIDDEN_USER",
-        )
+        logger.debug("Incoming whatsapp webhook message")
     except UnexpectedMetaPayloadError as e:
         logger.error(f"Unexpected Meta payload format: {e}")
         sentry_sdk.set_tag("error_type", "unexpected_meta_payload")
@@ -305,7 +290,7 @@ async def main_webhook(
         )
         sentry_sdk.capture_exception(e)
         if e.reply_to:
-            notifier = WhatsAppConversationManager(user_phone_num=e.reply_to)
+            notifier = WhatsAppConversationManager(bsuid=e.reply_to)
             background_tasks.add_task(
                 notifier.send_whatsapp_message,
                 "It seems Meta sent your message in an unexpected format. This is not a problem in what you wrote, "
@@ -340,7 +325,7 @@ async def main_webhook(
 
     # Create a user-specific conversation manager instance for this request
     conversation_manager = WhatsAppConversationManager(
-        user_phone_num=from_whatsapp_number,
+        bsuid=bsuid,
         incoming_msg_type=incoming_msg_type,
         incoming_msg_body=incoming_msg_body,
         message_id=message_id,
@@ -383,17 +368,17 @@ async def main_webhook(
             success=False, message="Message too old, notified user", status_code=422, error_code="MESSAGE_TOO_OLD"
         )
 
-    # Retrieve existing user or register new user and get their user_id
-    user_id = await conversation_manager.retrieve_or_register_user()
+    # Exchange the sender's BSUID for a JWT with apps/auth and get their user_id (GUID)
+    user_id = await conversation_manager.authenticate_user()
 
     if user_id is None:
-        # User retrieval/registration failed
+        # Token exchange failed
         background_tasks.add_task(
             conversation_manager.send_whatsapp_message,
-            "Sorry, we couldn't register you to our database. Please try again later.",
+            "Sorry, we couldn't sign you in. Please try again later.",
         )
         return create_response_for_meta(
-            success=False, message="User retrieval/registration failed", status_code=500, error_code="USER_REGISTRATION_FAILED"
+            success=False, message="User authentication failed", status_code=500, error_code="USER_AUTHENTICATION_FAILED"
         )
 
     # Set user_id in contextvar for all subsequent logs (including background tasks)

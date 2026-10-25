@@ -55,7 +55,7 @@ class MetaApiServiceReal(MetaApiServiceBase):
 
         try:
             async with httpx.AsyncClient() as client:
-                logger.debug(f"Sending typing indicator to {recipient_phone}")
+                logger.debug("Sending typing indicator")
 
                 response = await client.post(self.api_url, headers=self._get_headers(), json=json_data)
                 response.raise_for_status()
@@ -104,7 +104,7 @@ class MetaApiServiceReal(MetaApiServiceBase):
             https://developers.facebook.com/documentation/business-messaging/whatsapp/business-scoped-user-ids#send-message-requests
         """
         if not recipient_phone:
-            logger.error("Cannot send message: No recipient phone number")
+            logger.error("Cannot send message: No recipient")
             return
 
         if not message_parts:
@@ -113,7 +113,7 @@ class MetaApiServiceReal(MetaApiServiceBase):
 
         try:
             async with httpx.AsyncClient() as client:
-                logger.debug(f"Sending {len(message_parts)} message part(s) to {recipient_phone}")
+                logger.debug(f"Sending {len(message_parts)} message part(s)")
 
                 for i, part in enumerate(message_parts, 1):
                     json_data = {
@@ -132,8 +132,7 @@ class MetaApiServiceReal(MetaApiServiceBase):
 
                     # Log message part
                     if part != "...":
-                        preview = part[:100] + ("..." if len(part) > 100 else "")
-                        logger.info(f"Sent message part {i}/{len(message_parts)}: {preview}")
+                        logger.info(f"Sent message part {i}/{len(message_parts)}: {len(part)} characters")
                     else:
                         logger.info("Sent typing indicator")
 

@@ -14,7 +14,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse, Response
 
 from ansari_whatsapp.utils.config import get_settings
-from ansari_whatsapp.utils.exceptions import PhoneHiddenUserError, UnexpectedMetaPayloadError
+from ansari_whatsapp.utils.exceptions import UnexpectedMetaPayloadError
 
 settings = get_settings()
 
@@ -160,8 +160,9 @@ async def parse_meta_payload(
         body (dict[str, dict]): The JSON body of the incoming webhook request from Meta.
 
     Returns:
-        tuple: A tuple of (is_status, is_target_business_number, user_whatsapp_number,
-               incoming_msg_type, incoming_msg_body, message_id, message_unix_time)
+        tuple: A tuple of (is_status, is_target_business_number, bsuid,
+               incoming_msg_type, incoming_msg_body, message_id, message_unix_time).
+               `bsuid` is the sender's business-scoped user ID; the phone number is never used.
 
     Raises:
         Exception: If the payload structure is invalid or unsupported.
@@ -172,14 +173,14 @@ async def parse_meta_payload(
         and (changes := entry[0].get("changes", []))
         and (value := changes[0].get("value", {}))
     ):
-        error_msg = f"Invalid received payload from WhatsApp user and/or problem with Meta's API:\n{body}"
+        error_msg = f"Invalid received payload from WhatsApp user and/or problem with Meta's API:\n{_redact_for_logging(body)}"
         logger.error(error_msg)
         raise Exception(error_msg)
 
     # Check if this webhook is intended for our WhatsApp business number
     # Metadata should always be present in a valid webhook payload
     if "metadata" not in value:
-        error_msg = f"Missing metadata in webhook payload from WhatsApp API:\n{value}"
+        error_msg = f"Missing metadata in webhook payload from WhatsApp API:\n{_redact_for_logging(value)}"
         logger.error(error_msg)
         raise Exception(error_msg)
 
@@ -202,19 +203,17 @@ async def parse_meta_payload(
     is_status = False
 
     if "messages" not in value:
-        error_msg = f"Unsupported message type received from WhatsApp user:\n{body}"
+        error_msg = f"Unsupported message type received from WhatsApp user:\n{_redact_for_logging(body)}"
         logger.error(error_msg)
         raise Exception(error_msg)
 
     incoming_msg = value["messages"][0]
 
-    if "from" not in incoming_msg and incoming_msg.get("from_user_id"):
-        raise PhoneHiddenUserError(incoming_msg["from_user_id"])
-
     try:
-        # Extract message details
+        # Extract message details. `from_user_id` (the BSUID) is always present; `from` (the phone number) may
+        # be missing, and is deliberately never read.
         message_id = incoming_msg.get("id")
-        user_whatsapp_number = incoming_msg["from"]
+        bsuid = incoming_msg["from_user_id"]
         message_unix_time_str = incoming_msg.get("timestamp")
         message_unix_time = int(message_unix_time_str) if message_unix_time_str is not None else None
 
@@ -225,20 +224,18 @@ async def parse_meta_payload(
     except KeyError as e:
         logger.error(f"Missing key {e} in messages[0]; redacted webhook value: {_redact_for_logging(value)}")
         contact = (value.get("contacts") or [{}])[0]
-        reply_to = (
-            incoming_msg.get("from") or incoming_msg.get("from_user_id") or contact.get("wa_id") or contact.get("user_id")
-        )
+        reply_to = incoming_msg.get("from_user_id") or contact.get("user_id")
         raise UnexpectedMetaPayloadError(
             f"Missing key {e} in messages[0]; keys present: {sorted(incoming_msg.keys())}",
             reply_to=reply_to,
         ) from e
 
-    logger.info(f"Received a supported whatsapp message from {user_whatsapp_number}: {incoming_msg_body}")
+    logger.info(f"Received a supported whatsapp message (type: {incoming_msg_type})")
 
     return (
         is_status,
         is_target_business_number,
-        user_whatsapp_number,
+        bsuid,
         incoming_msg_type,
         incoming_msg_body,
         message_id,
