@@ -135,10 +135,26 @@ Finish environment behaviour and make the service testable and deployable by oth
 
 #### Deliverables
 
-- [ ] Maintenance flag reuse with tests.
-- [ ] `!d ` filter kept, with tests (ignored in staging, processed otherwise).
-- [ ] README covering setup, tests, and local testing with zrok.
-- [ ] Staging smoke-test checklist.
+- [x] Maintenance flag `WA_MAINTENANCE_MODE`, with tests.
+- [x] `!d ` filter kept, with tests (ignored in staging, processed otherwise).
+- [x] README covering setup, tests, and local testing with zrok.
+- [x] Staging smoke-test checklist (in `apps/whatsapp/README.md`).
+
+#### Phase 4 outcome (what changed from the notes above)
+
+- The client now uses the `/chat` stream, which reports failures as an explicit `error` event, so the inline `Error:` detection in item (a) is no longer needed; a failed, cut-off or malformed stream is a failure the user is told about.
+- Logs carry only `request_id` (no user id, so `get_subject` was removed) and are one JSON line per entry on stdout, the shape Railway indexes.
+- Thread-list, create, delete, timeout and sign-in failures are captured in Sentry.
+- `/sentry-debug` is kept but registered only outside production; `clean_logs.sh` is removed (logs go to stdout).
+- The app reads `PORT` (default 8001).
+- Dockerfile: uv 0.9.13, `uv sync --frozen`, and paths relative to the repo root (the build context RELEASE.md prescribes). `apps/whatsapp/railway.toml` records the Railway settings; Railway does not read it.
+
+#### Open at the end of Phase 4 (not verified)
+
+- The Docker image has never been built or run (no Docker daemon was available).
+- `from_user_id` presence in every webhook, and a real send to a BSUID, are untested against live Meta.
+- The `apps/auth` `/whatsapp` contract (route, header, `AUTH_WHATSAPP_API_KEY`) is assumed; nothing has run against a live `apps/auth` or `apps/api`.
+- The `whatsapp` CI job has not run on a GitHub runner. Making it a required check on `develop` needs a repo admin; mention how in the PR description rather than doing it here.
 
 #### Acceptance Criteria
 

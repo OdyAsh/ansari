@@ -102,7 +102,8 @@ Logs deliberately contain no phone numbers, BSUIDs or message text. Railway caps
 
 Only the facts below come from this repo. The dashboard settings themselves are set by an operator.
 
-- Build with the repository root as the root directory and `apps/whatsapp/Dockerfile` as the Dockerfile path.
+- Build with the repository root as the root directory and `apps/whatsapp/Dockerfile` as the Dockerfile path. Locally, from the repo root: `docker build -f apps/whatsapp/Dockerfile -t ansari-whatsapp .`
+- `apps/whatsapp/railway.toml` records these settings in git; Railway does not read it (same as `apps/api/railway.toml`).
 - Set a watch path so only changes under `apps/whatsapp/**` rebuild this service (see the "Railway service configuration" block in `RELEASE.md`).
 - Health check path: `/`.
 - The app binds `PORT` when Railway provides it. If the public domain is given a fixed target port, it must match.
