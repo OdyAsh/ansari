@@ -132,6 +132,17 @@ def test_mock_auth_same_bsuid_same_user_new_bsuid_new_user():
     assert first != other
 
 
+def test_mock_auth_returns_the_configured_real_token_when_one_is_set(monkeypatch):
+    monkeypatch.setenv("MOCK_AUTH_TOKEN", "a.real.jwt")
+    get_settings.cache_clear()
+
+    try:
+        assert asyncio.run(AuthClientMock().get_token(BSUID)) == "a.real.jwt"
+    finally:
+        monkeypatch.delenv("MOCK_AUTH_TOKEN")
+        get_settings.cache_clear()
+
+
 # ---------- apps/api client ----------
 
 

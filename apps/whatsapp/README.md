@@ -74,6 +74,7 @@ Staging shares the same test number, so start every message you send while testi
 | `WHATSAPP_CHAT_RETENTION_HOURS` | How long a conversation continues before a fresh thread (default 3) |
 | `SENTRY_DSN` | Empty disables Sentry |
 | `MOCK_ANSARI_CLIENT`, `MOCK_AUTH_CLIENT`, `MOCK_META_API` | Replace the real services with fakes |
+| `MOCK_AUTH_TOKEN` | With `MOCK_AUTH_CLIENT=True`: a real JWT returned for every BSUID, so a real `apps/api` accepts it |
 
 Meta credentials differ per Meta app (Test, Staging, production). A token from one app will not work with another app's secret.
 

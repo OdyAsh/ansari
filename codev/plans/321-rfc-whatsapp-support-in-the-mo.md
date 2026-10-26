@@ -149,11 +149,19 @@ Finish environment behaviour and make the service testable and deployable by oth
 - The app reads `PORT` (default 8001).
 - Dockerfile: uv 0.9.13, `uv sync --frozen`, and paths relative to the repo root (the build context RELEASE.md prescribes). `apps/whatsapp/railway.toml` records the Railway settings; Railway does not read it.
 
+#### Real-service run (owner requirement: Phase 4 is not complete on mocks alone)
+
+Done 2026-10-26, local, no Docker: real `apps/auth` (new empty `ansari_auth` database) and real `apps/api` (the local app database, migrated 8 to 11 with existing rows intact, Gemini key from `apps/api/.env`), the WhatsApp service with `MOCK_ANSARI_CLIENT=False`, `MOCK_AUTH_CLIENT=True` plus `MOCK_AUTH_TOKEN` (a real JWT from a throwaway user) and `MOCK_META_API=True`.
+
+- A correctly signed webhook (BSUID only) was accepted, the real `apps/api` accepted the JWT, a `whatsapp` thread was created, the real `/chat` stream returned an answer (about 9 seconds) and it was handed to the (mock) Meta sender.
+- A second message from the same BSUID reused the same thread: one thread, four saved messages (user, assistant, user, assistant).
+- Still real-only gaps: the BSUID-to-JWT exchange (`apps/auth` has no `/whatsapp` route yet; mock by owner decision, to confirm with Amr) and real Meta (receiving a webhook from Meta, sending to a BSUID). The Meta run is a blocker for the staging smoke test and remains open.
+
 #### Open at the end of Phase 4 (not verified)
 
 - The Docker image has never been built or run (no Docker daemon was available).
 - `from_user_id` presence in every webhook, and a real send to a BSUID, are untested against live Meta.
-- The `apps/auth` `/whatsapp` contract (route, header, `AUTH_WHATSAPP_API_KEY`) is assumed; nothing has run against a live `apps/auth` or `apps/api`.
+- The `apps/auth` `/whatsapp` contract (route, header, `AUTH_WHATSAPP_API_KEY`) is assumed and was not exercised (a real `apps/api` and the real `apps/auth` were run, see above).
 - The `whatsapp` CI job has not run on a GitHub runner. Making it a required check on `develop` needs a repo admin; mention how in the PR description rather than doing it here.
 
 #### Acceptance Criteria

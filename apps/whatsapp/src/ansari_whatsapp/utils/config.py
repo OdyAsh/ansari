@@ -98,6 +98,8 @@ class WhatsAppSettings(BaseSettings):
     SENTRY_DSN: HttpUrl | None = None
     MOCK_ANSARI_CLIENT: bool = False
     MOCK_AUTH_CLIENT: bool = False
+    # A real JWT the mock auth client returns for every BSUID, so a mocked sign-in can talk to a real apps/api
+    MOCK_AUTH_TOKEN: SecretStr | None = None
     MOCK_META_API: bool = False
 
     ########### Validators ###########
