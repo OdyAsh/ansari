@@ -14,3 +14,6 @@ for key, value in {
     "META_ACCESS_TOKEN_FROM_SYS_USER": "test",
 }.items():
     os.environ.setdefault(key, value)
+
+# A real token in a developer's .env would make every BSUID the same user
+os.environ["MOCK_AUTH_TOKEN"] = ""

@@ -174,10 +174,7 @@ async def verification_webhook(request: Request) -> str | None:
     verify_token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
 
-    if get_settings().DEPLOYMENT_TYPE == "local":
-        logger.debug(f"Verification webhook received: {mode=}, {challenge=}, {verify_token=}")
-    else:
-        logger.debug(f"Verification webhook received: {mode=}, {challenge=}, verification token matches configured value")
+    logger.debug(f"Verification webhook received: {mode=}, {challenge=}, token_present={bool(verify_token)}")
 
     if mode and verify_token:
         if mode == "subscribe" and verify_token == get_settings().META_WEBHOOK_VERIFY_TOKEN.get_secret_value():

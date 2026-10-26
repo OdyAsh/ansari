@@ -347,3 +347,29 @@ def test_logs_contain_no_phone_number_bsuid_or_message_text():
     assert PHONE not in log_text
     assert BSUID not in log_text
     assert "a-very-distinctive-question" not in log_text
+
+
+def test_verification_handshake_never_logs_the_verify_token(monkeypatch):
+    from loguru import logger
+
+    token = "a-distinctive-verify-token-4711"
+    monkeypatch.setenv("META_WEBHOOK_VERIFY_TOKEN", token)
+    get_settings.cache_clear()
+    captured = []
+    sink_id = logger.add(lambda m: captured.append(str(m)), level="DEBUG")
+    try:
+        ok = client.get("/whatsapp/v2", params={"hub.mode": "subscribe", "hub.verify_token": token, "hub.challenge": "c1"})
+        bad = client.get(
+            "/whatsapp/v2", params={"hub.mode": "subscribe", "hub.verify_token": "a-wrong-token-value", "hub.challenge": "c2"}
+        )
+    finally:
+        logger.remove(sink_id)
+        monkeypatch.undo()
+        get_settings.cache_clear()
+
+    log_text = "\n".join(captured)
+    assert ok.text == "c1"
+    assert bad.status_code == 403
+    assert log_text
+    assert token not in log_text
+    assert "a-wrong-token-value" not in log_text
