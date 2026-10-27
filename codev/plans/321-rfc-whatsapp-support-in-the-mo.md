@@ -155,14 +155,43 @@ Done 2026-10-26, local, no Docker: real `apps/auth` (new empty `ansari_auth` dat
 
 - A correctly signed webhook (BSUID only) was accepted, the real `apps/api` accepted the JWT, a `whatsapp` thread was created, the real `/chat` stream returned an answer (about 9 seconds) and it was handed to the (mock) Meta sender.
 - A second message from the same BSUID reused the same thread: one thread, four saved messages (user, assistant, user, assistant).
-- Still real-only gaps: the BSUID-to-JWT exchange (`apps/auth` has no `/whatsapp` route yet; mock by owner decision, to confirm with Amr) and real Meta (receiving a webhook from Meta, sending to a BSUID). The Meta run is a blocker for the staging smoke test and remains open.
+- Still real-only gaps: the BSUID-to-JWT exchange (`apps/auth` has no `/whatsapp` route yet; mock by owner decision, to confirm with Amr).
+
+#### Real-Meta run (2026-10-26)
+
+No Meta test number could be claimed (see the PR notes below), so the run used Meta's own pieces where it could and the production number for one send.
+
+- **Webhooks from Meta, through zrok:** the Test app's callback URL (`https://zrok0ansari0test.share.zrok.io/whatsapp/v2`) passed Meta's verification handshake; Meta's dashboard sample webhooks (v26.0) reached the service with a valid signature. They were ignored because Meta's samples carry a fake phone number ID; equivalent signed payloads (username with phone hidden, and with phone present) were then sent through the public URL with the sample ID set locally, and each was identified by BSUID, got a thread in the real `apps/api` and an answer. Meta's "not opted in" sample was not replayed.
+- **Send to a BSUID:** one text was sent from the production number to the developer's own BSUID (`recipient`, no `to`) with a direct HTTP call using the same endpoint, token and body shape as `MetaApiServiceReal`. Meta answered 200 with the BSUID echoed as `user_id`, and delivery and read status webhooks followed. The developer confirming it appeared on the phone is still to be recorded. The service class itself was not used for this send.
+- **How the BSUID was obtained:** a temporary log line for `from_user_id` was added to the legacy service for about an hour and is now commented out; the value lives only in the git-ignored `apps/whatsapp/.env` as `REAL_TEST_BSUID`.
+- **Fixes found on the way:** the verification handler logged the verify token in local mode (removed, with a test); the app ID in the legacy `.env` belonged to a different Meta app than the app secret (a local config error, not a code change).
+- **Not covered:** a real phone's message arriving at the new service (the Test app has no number), and the Docker image.
 
 #### Open at the end of Phase 4 (not verified)
 
 - The Docker image has never been built or run (no Docker daemon was available).
-- `from_user_id` presence in every webhook, and a real send to a BSUID, are untested against live Meta.
+- A real phone's webhook reaching the new service is untested (sample webhooks and one production-number send were verified, see above). Meta's own samples show `from_user_id` present, but that is a sample, not a live payload.
 - The `apps/auth` `/whatsapp` contract (route, header, `AUTH_WHATSAPP_API_KEY`) is assumed and was not exercised (a real `apps/api` and the real `apps/auth` were run, see above).
 - The `whatsapp` CI job has not run on a GitHub runner. Making it a required check on `develop` needs a repo admin; mention how in the PR description rather than doing it here.
+
+#### Notes for the PR description (do not lose these)
+
+1. **Call to action (Waleed):** a new WhatsApp phone number is needed for the staging and test environments to share. Reason: the developer cannot claim a Meta test number ("An error occurred while creating the test account. Please try again."), the account has one live production number, and Meta's free tier allows two business numbers, with a test number counting as one. The failure is widely reported and Meta has not said it is working on a fix, as far as the threads below show. Forum threads (Meta for Developers community unless noted; each was seen listed in search results, and only the titles and snippets were read, not the full threads):
+   - https://developers.facebook.com/community/threads/1725780401801558/ (test number provisioning fails although the test WABA exists)
+   - https://developers.facebook.com/community/threads/899305532556240/ (error while creating a WhatsApp Business test account)
+   - https://developers.facebook.com/community/threads/1789721235531963/ (a verified business cannot claim a test number)
+   - https://developers.facebook.com/community/threads/2182066965706958/ ("No phone numbers available" when claiming)
+   - https://developers.facebook.com/community/threads/1379359970388767/ ("get new test number" fails)
+   - https://developers.facebook.com/community/threads/1342448903816361/ (asked 8 Dec 2025, the same error)
+   - https://developers.facebook.com/community/threads/568920538895906/ (asked 23 Sep 2024, cannot create a test number)
+   - https://developers.facebook.com/community/threads/1246890150314692/ (cannot claim a test number, for several days)
+   - https://developers.facebook.com/community/threads/849020947139819/ (no test number after adding the WhatsApp product)
+   - https://developers.facebook.com/community/threads/2128147975242023 and https://developers.facebook.com/community/threads/1694270385568451 and https://developers.facebook.com/community/threads/2981069012252252 (same error)
+   - https://stackoverflow.com/questions/79475543/whatsapp-cloud-api-test-number-not-active-after-generation (a related Stack Overflow question)
+   - https://www.reddit.com/r/WhatsappBusinessAPI/comments/1ni3dxr/whatsapp_api_current_issue_invalid_test_phone/ (Reddit, "apparently some others in the meta developer community")
+   The dated threads (Sep 2024, Dec 2025) and the many recent ones show the problem is not new. Before the PR is opened, re-open a few of these and confirm they still say what is written here, and whether anyone from Meta has answered.
+2. **Alternative if no new number is created (developer's idea, not built):** all three environments (production, staging, local) share the one production number and each answers only its own messages: no prefix means production, a `!s ` prefix means staging, a `!d ` prefix means local. Each environment ignores messages meant for the others, so the production service must be changed first to ignore the prefixed ones. Downsides to state: every environment's app receives all messages for the number, including real users' (a privacy cost for a laptop), the replies come from the production number, and a missing rule in one environment means a double or wrong answer. Today only the `!d ` rule exists, in staging.
+3. **BSUID logging:** the legacy service has a commented-out, opt-in log line for reading a developer's own BSUID; it must stay commented out in production.
 
 #### Acceptance Criteria
 
