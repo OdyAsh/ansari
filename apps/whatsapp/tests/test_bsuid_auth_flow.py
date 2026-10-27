@@ -268,6 +268,24 @@ def test_ansari_client_malformed_event_is_a_failure(monkeypatch):
         asyncio.run(AnsariClientReal().process_message("jwt", "t1", "hi"))
 
 
+def test_ansari_client_error_body_never_reaches_logs_or_the_raised_error(monkeypatch):
+    from loguru import logger
+
+    body = '{"detail":"echo of the user: a-very-distinctive-question"}'
+    _use_transport(monkeypatch, "ansari_whatsapp.services.ansari_client_real", lambda r: httpx.Response(400, text=body))
+    captured = []
+    sink_id = logger.add(lambda m: captured.append(str(m)), level="DEBUG")
+    try:
+        with pytest.raises(MessageProcessingError) as raised:
+            asyncio.run(AnsariClientReal().process_message("jwt", "t1", "hi"))
+    finally:
+        logger.remove(sink_id)
+
+    assert "400" in str(raised.value)
+    assert "a-very-distinctive-question" not in str(raised.value)
+    assert "a-very-distinctive-question" not in "\n".join(captured)
+
+
 def test_ansari_client_error_status_raises(monkeypatch):
     _use_transport(monkeypatch, "ansari_whatsapp.services.ansari_client_real", lambda r: httpx.Response(500, text="boom"))
 

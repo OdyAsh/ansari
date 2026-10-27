@@ -128,6 +128,37 @@ def test_staging_processes_messages_without_the_dev_prefix(monkeypatch):
     assert chat_calls == ["what is ansari?"]
 
 
+def test_staging_handles_an_unsupported_message_type_without_crashing(monkeypatch):
+    """Meta sends an unsupported type (video note, poll...) as an `errors` list, not a dict with a body."""
+    monkeypatch.setattr(get_settings(), "DEPLOYMENT_TYPE", "staging")
+    chat_calls = _spy_on_chat_calls(monkeypatch)
+    settings = get_settings()
+    value = {
+        "metadata": {
+            "phone_number_id": settings.META_BUSINESS_PHONE_NUMBER_ID.get_secret_value(),
+            "display_phone_number": "+1234567890",
+        },
+        "messages": [
+            {
+                "from_user_id": BSUID,
+                "id": "wamid.TEST",
+                "timestamp": str(int(time.time())),
+                "type": "unsupported",
+                "errors": [{"code": 131051, "title": "Message type is not supported"}],
+            }
+        ],
+    }
+    payload = {"object": "whatsapp_business_account", "entry": [{"changes": [{"value": value}]}]}
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    secret = settings.META_ANSARI_APP_SECRET.get_secret_value().encode("utf-8")
+    signature = hmac.new(secret, body, hashlib.sha256).hexdigest()
+
+    response = client.post("/whatsapp/v2", content=body, headers={"X-Hub-Signature-256": f"sha256={signature}"})
+
+    assert response.json()["error_code"] == "UNSUPPORTED_MESSAGE_TYPE"
+    assert chat_calls == []
+
+
 def test_local_processes_messages_with_the_dev_prefix(monkeypatch):
     monkeypatch.setattr(get_settings(), "DEPLOYMENT_TYPE", "local")
     chat_calls = _spy_on_chat_calls(monkeypatch)

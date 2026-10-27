@@ -185,7 +185,7 @@ async def parse_meta_payload(
         raise Exception(error_msg)
 
     if "phone_number_id" not in value["metadata"]:
-        error_msg = f"Missing phone_number_id in webhook payload metadata:\n{value['metadata']}"
+        error_msg = f"Missing phone_number_id in webhook payload metadata:\n{_redact_for_logging(value['metadata'])}"
         logger.error(error_msg)
         raise Exception(error_msg)
 

@@ -187,9 +187,8 @@ class AnsariClientReal(AnsariClientBase):
             # Use stream=True to receive the response as a stream
             async with self.client.stream("POST", url, json=data, headers=self._auth(token)) as response:
                 if response.status_code != 200:
-                    error_detail = await response.aread()
-                    logger.error(f"Error from backend API: {error_detail}")
-                    raise MessageProcessingError(f"Backend returned HTTP {response.status_code}: {error_detail}")
+                    logger.error(f"Error from backend API: HTTP {response.status_code}")
+                    raise MessageProcessingError(f"Backend returned HTTP {response.status_code}")
 
                 # Accumulate the answer from the `text` events
                 full_response = ""

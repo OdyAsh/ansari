@@ -2,7 +2,7 @@
 
 ## Summary
 
-The legacy Python WhatsApp service now lives in the monorepo as `apps/whatsapp`. It identifies users by their business-scoped user ID (BSUID), gets a JWT for them from `apps/auth`, and talks to `apps/api`, keeping one thread per user that is replaced after 3 hours of silence. Four phases (import, BSUID/JWT, thread lifecycle, environments and docs) were built and reviewed; 77 tests pass. It has run against a real `apps/api` and `apps/auth`, and Meta accepted one real send to a BSUID, but a real phone's message has never reached the new service, the Docker image has never been built, and the `apps/auth` `/whatsapp` route does not exist yet (the sign-in is mocked by owner decision).
+The legacy Python WhatsApp service now lives in the monorepo as `apps/whatsapp`. It identifies users by their business-scoped user ID (BSUID), gets a JWT for them from `apps/auth`, and talks to `apps/api`, keeping one thread per user that is replaced after 3 hours of silence. Four phases (import, BSUID/JWT, thread lifecycle, environments and docs) were built and reviewed; 79 tests pass. It has run against a real `apps/api` and `apps/auth`, and Meta accepted one real send to a BSUID, but a real phone's message has never reached the new service, the Docker image has never been built, and the `apps/auth` `/whatsapp` route does not exist yet (the sign-in is mocked by owner decision).
 
 ## Spec Compliance
 
@@ -95,6 +95,16 @@ Only Claude was consulted (a decision for this environment, since the other mode
 - **Concern**: `pytest` in runtime dependencies; `requires-python` and ruff `py310` against a 3.13 image; `await request.json()` outside the try block → **N/A** here: legacy packaging and behaviour, listed as follow-ups.
 - **Concern**: Docker image never built; CI never run on a runner → **N/A**: stated in the PR; neither can be done from this machine.
 See `codev/projects/321-rfc-whatsapp-support-in-the-mo/321-review-iter1-rebuttals.md`.
+
+### PR review (PR #327, Round 2) , COMMENT
+
+#### Claude
+- **Concern**: all four round-1 findings → **Verified fixed** by the reviewer, each with a non-vacuous test.
+- **Concern**: the apps/api client still logged and reported the raw error body → **Addressed**: only the status code; tested, fails with the body restored.
+- **Concern**: the staging `!d ` filter crashed on an unsupported message type (list-shaped body), giving a 500 and a Meta retry loop in staging only → **Addressed**: guarded with an `isinstance` check; tested, fails without it.
+- **Concern**: one payload interpolation skipped redaction → **Addressed**.
+- **Concern**: "Message too old, notified user" while nothing notifies the user → **Addressed**: text and docstring corrected.
+See `codev/projects/321-rfc-whatsapp-support-in-the-mo/321-review-iter2-rebuttals.md`.
 
 ## Lessons Learned
 

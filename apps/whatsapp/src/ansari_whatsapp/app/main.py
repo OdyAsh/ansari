@@ -219,7 +219,7 @@ async def main_webhook(
     - Status message: Returns 200 with status acknowledgment
     - Maintenance mode: Sends maintenance message and returns 200
     - Staging filter: Returns 200 if message prefixed with "!d" in staging
-    - Old message: Returns 200 after notifying user
+    - Old message: Ignored (nothing is sent to the user)
     - Authentication failure: Returns 500 error response
     - Unsupported media: Sends unsupported message and returns 200
 
@@ -351,7 +351,12 @@ async def main_webhook(
     #   and not for the staging server.
     #   This is done by prefixing the message with "!d " (e.g., "!d what is ansari?")
     # NOTE: Obviously, this temp. solution will be removed when we get a dedicated testing number for staging testing.
-    if get_settings().DEPLOYMENT_TYPE == "staging" and incoming_msg_body.get("body", "").startswith("!d "):
+    # (An unsupported message type arrives as a list, not a dict, so only look inside a dict.)
+    if (
+        get_settings().DEPLOYMENT_TYPE == "staging"
+        and isinstance(incoming_msg_body, dict)
+        and incoming_msg_body.get("body", "").startswith("!d ")
+    ):
         logger.debug("Incoming message is meant for a dev who's testing locally now, so will not process it in staging...")
         return create_response_for_meta(
             success=False, message="Message filtered for local development", status_code=202, error_code="DEV_FILTER"
@@ -361,7 +366,7 @@ async def main_webhook(
     # If so, send a message to the user and return
     if is_message_too_old(message_unix_time):
         return create_response_for_meta(
-            success=False, message="Message too old, notified user", status_code=422, error_code="MESSAGE_TOO_OLD"
+            success=False, message="Message too old, ignored", status_code=422, error_code="MESSAGE_TOO_OLD"
         )
 
     # Exchange the sender's BSUID for a JWT with apps/auth
