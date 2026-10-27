@@ -20,5 +20,5 @@ uv run --with ruff ruff check .
 Notes:
 
 - `test_utils.py` holds helpers for the service tests, not tests of its own.
-- Everything runs against mocks and in-process fakes of HTTP calls. Nothing has been run against a live `apps/auth`, `apps/api` or Meta.
+- Everything in this suite runs against mocks and in-process fakes of HTTP calls, never a live `apps/auth`, `apps/api` or Meta. Live runs were done by hand; see the plan and the README.
 - To see the service logs while testing, add `-s`.

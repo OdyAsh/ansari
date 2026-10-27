@@ -44,8 +44,13 @@ logger.remove()
 # Get settings
 settings = get_settings()
 
-# JSON lines everywhere except local development and GitHub Actions
-use_json_logs = settings.DEPLOYMENT_TYPE not in ["local", "development"] and os.getenv("GITHUB_ACTIONS") != "true"
+
+def should_use_json_logs(deployment_type: str, github_actions: str | None) -> bool:
+    """JSON lines everywhere except local development and GitHub Actions."""
+    return deployment_type not in ["local", "development"] and github_actions != "true"
+
+
+use_json_logs = should_use_json_logs(settings.DEPLOYMENT_TYPE, os.getenv("GITHUB_ACTIONS"))
 
 # Railway understands debug/info/warn/error, so Loguru's other levels are mapped onto those
 RAILWAY_LEVELS = {"TRACE": "debug", "DEBUG": "debug", "INFO": "info", "SUCCESS": "info", "WARNING": "warn"}

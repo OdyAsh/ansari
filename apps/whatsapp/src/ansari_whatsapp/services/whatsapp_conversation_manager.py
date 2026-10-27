@@ -5,7 +5,6 @@ import asyncio
 import time
 from datetime import datetime
 
-import httpx
 import sentry_sdk
 from loguru import logger
 
@@ -250,6 +249,7 @@ class WhatsAppConversationManager:
         new_thread_id = result.get("thread_id")
         if not new_thread_id:
             logger.error("Thread creation returned no thread id")
+            self._capture(ThreadCreationError("Thread creation returned no thread id"), "thread_creation_failure")
             await self.send_whatsapp_message(
                 "An unexpected error occurred while creating a new chat session. Please try again later.."
             )
@@ -281,14 +281,6 @@ class WhatsAppConversationManager:
                     thread_id=thread_id,
                     message=incoming_txt_msg,
                 )
-            except httpx.TimeoutException as e:
-                logger.error(f"Backend timeout while processing message: {e}")
-                self._capture(e, "backend_timeout")
-                await self.send_whatsapp_message("The request timed out. Please try sending your message again.")
-                # Cancel typing indicator if running
-                if self.typing_indicator_task and not self.typing_indicator_task.done():
-                    self.typing_indicator_task.cancel()
-                return
             except MessageProcessingError as e:
                 logger.error(f"Failed to process message: {e}")
                 self._capture(e, "message_processing_failure")

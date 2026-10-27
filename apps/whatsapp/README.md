@@ -127,7 +127,8 @@ The Docker image has not been built or run by the author of this change. Do that
 
 ### Known gaps to confirm before production
 
-- That `from_user_id` is present in every webhook, and that replying to a BSUID is accepted by Meta. Neither has been tried against live Meta.
-- `apps/auth`'s `/whatsapp` endpoint contract is assumed (route, header and `AUTH_WHATSAPP_API_KEY`); nothing here has run against a live `apps/auth` or `apps/api`.
+- A real phone's webhook has never reached this service. Meta's dashboard sample webhooks did (signature verified, `from_user_id` present), and one production-number send to a real BSUID was accepted by Meta (HTTP 200, delivery and read statuses followed). That send used a direct HTTP call with the same endpoint and body shape, not `MetaApiServiceReal` itself.
+- `apps/auth`'s `/whatsapp` endpoint contract is assumed (route, header and `AUTH_WHATSAPP_API_KEY`) and has not been exercised. The service has run against a real `apps/api` (with a real JWT from `apps/auth` returned by the mock sign-in): a thread was created and the chat stream answered.
+- The Docker image has not been built or run.
 - `apps/api`'s chat routes save every message with `source: "web"`, so WhatsApp messages are not marked as such in the history.
 - Two near-simultaneous first messages from one user can create two threads. Extra `whatsapp` threads are harmless and can be swept manually (keep the newest per user).

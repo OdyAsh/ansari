@@ -181,6 +181,78 @@ def test_creation_response_without_a_thread_id_is_a_failure_the_user_hears_about
     assert sent
 
 
+@pytest.fixture
+def sentry_calls(monkeypatch):
+    """Record (error_type tag, exception) for every Sentry capture instead of sending it."""
+    tags, captured = {}, []
+    monkeypatch.setattr("sentry_sdk.set_tag", lambda key, value: tags.__setitem__(key, value))
+    monkeypatch.setattr("sentry_sdk.set_context", lambda *a, **kw: None)
+    monkeypatch.setattr("sentry_sdk.capture_exception", lambda error: captured.append((tags.get("error_type"), error)))
+    return captured
+
+
+def _silence_user_messages(monkeypatch):
+    async def ignore(self, msg_body, recipient_bsuid=None):
+        return None
+
+    monkeypatch.setattr(WhatsAppConversationManager, "send_whatsapp_message", ignore)
+
+
+def test_thread_list_failure_is_reported_to_sentry(monkeypatch, sentry_calls):
+    from ansari_whatsapp.utils.exceptions import ThreadInfoError
+
+    async def failing_list(self, token):
+        raise ThreadInfoError("apps/api is down")
+
+    monkeypatch.setattr(AnsariClientMock, "get_last_thread_info", failing_list)
+    _silence_user_messages(monkeypatch)
+
+    assert asyncio.run(_manager()._resolve_thread("hello")) is None
+    assert [kind for kind, _ in sentry_calls] == ["thread_info_failure"]
+
+
+def test_thread_delete_failure_is_reported_to_sentry(monkeypatch, sentry_calls):
+    manager = _manager()
+    old = asyncio.run(manager._resolve_thread("hello"))
+    _age_thread(old, EXPIRY + 60)
+
+    async def failing_delete(self, token, thread_id):
+        raise ThreadDeletionError("apps/api is down")
+
+    monkeypatch.setattr(AnsariClientMock, "delete_thread", failing_delete)
+    _silence_user_messages(monkeypatch)
+
+    assert asyncio.run(manager._resolve_thread("hello again")) is None
+    assert [kind for kind, _ in sentry_calls] == ["thread_deletion_failure"]
+
+
+def test_thread_create_failure_is_reported_to_sentry(monkeypatch, sentry_calls):
+    async def no_id(self, token, title):
+        return {}
+
+    monkeypatch.setattr(AnsariClientMock, "create_thread", no_id)
+    _silence_user_messages(monkeypatch)
+
+    assert asyncio.run(_manager()._resolve_thread("hello")) is None
+    assert [kind for kind, _ in sentry_calls] == ["thread_creation_failure"]
+
+
+def test_message_processing_failure_is_reported_to_sentry(monkeypatch, sentry_calls):
+    from ansari_whatsapp.utils.exceptions import MessageProcessingError
+
+    async def failing_chat(self, token, thread_id, message):
+        raise MessageProcessingError("stream cut off")
+
+    monkeypatch.setattr(AnsariClientMock, "process_message", failing_chat)
+    _silence_user_messages(monkeypatch)
+    manager = _manager()
+    manager.typing_indicator_task = None
+
+    asyncio.run(manager.handle_text_message())
+
+    assert [kind for kind, _ in sentry_calls] == ["message_processing_failure"]
+
+
 def test_another_users_thread_is_never_touched():
     mine = _manager()
     theirs = _manager(OTHER_BSUID)

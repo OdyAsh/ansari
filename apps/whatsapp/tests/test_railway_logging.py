@@ -5,8 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ansari_whatsapp.utils import app_logger
-from ansari_whatsapp.utils.app_logger import build_log_entry, railway_json_sink, request_id_var
+from ansari_whatsapp.utils.app_logger import build_log_entry, railway_json_sink, request_id_var, should_use_json_logs
 
 
 def _record(level: str = "INFO", message: str = "hello", exception=None) -> dict:
@@ -71,6 +70,16 @@ def test_request_id_variable_defaults_to_none_outside_a_request():
     assert request_id_var.get() == "none"
 
 
-def test_json_logs_are_off_in_local_development_and_in_ci():
-    # The test settings use DEPLOYMENT_TYPE=local, so readable logs are expected here
-    assert app_logger.use_json_logs is False
+@pytest.mark.parametrize(
+    ("deployment_type", "github_actions", "expected"),
+    [
+        ("local", None, False),
+        ("development", None, False),
+        ("staging", None, True),
+        ("production", None, True),
+        ("staging", "true", False),  # CI never emits JSON, whatever the deployment type
+        ("production", "false", True),
+    ],
+)
+def test_json_logs_are_used_only_when_deployed_and_not_in_ci(deployment_type, github_actions, expected):
+    assert should_use_json_logs(deployment_type, github_actions) is expected

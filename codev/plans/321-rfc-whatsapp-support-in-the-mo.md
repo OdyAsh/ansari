@@ -144,7 +144,7 @@ Finish environment behaviour and make the service testable and deployable by oth
 
 - The client now uses the `/chat` stream, which reports failures as an explicit `error` event, so the inline `Error:` detection in item (a) is no longer needed; a failed, cut-off or malformed stream is a failure the user is told about.
 - Logs carry only `request_id` (no user id, so `get_subject` was removed) and are one JSON line per entry on stdout, the shape Railway indexes.
-- Thread-list, create, delete, timeout and sign-in failures are captured in Sentry.
+- Thread-list, create, delete, message-processing and sign-in failures are captured in Sentry. A backend timeout is captured as a message-processing failure (the real client wraps timeouts into `MessageProcessingError`); there is no separate timeout case.
 - `/sentry-debug` is kept but registered only outside production; `clean_logs.sh` is removed (logs go to stdout).
 - The app reads `PORT` (default 8001).
 - Dockerfile: uv 0.9.13, `uv sync --frozen`, and paths relative to the repo root (the build context RELEASE.md prescribes). `apps/whatsapp/railway.toml` records the Railway settings; Railway does not read it.
@@ -173,6 +173,12 @@ No Meta test number could be claimed (see the PR notes below), so the run used M
 - A real phone's webhook reaching the new service is untested (sample webhooks and one production-number send were verified, see above). Meta's own samples show `from_user_id` present, but that is a sample, not a live payload.
 - The `apps/auth` `/whatsapp` contract (route, header, `AUTH_WHATSAPP_API_KEY`) is assumed and was not exercised (a real `apps/api` and the real `apps/auth` were run, see above).
 - The `whatsapp` CI job has not run on a GitHub runner. Making it a required check on `develop` needs a repo admin; mention how in the PR description rather than doing it here.
+
+#### Phase 4 review (Claude, iteration 1): COMMENT
+
+All findings were checked against the code. Fixed: the README and `tests/README.md` no longer claim nothing ran against live Meta or `apps/api` (they now say what was and was not done); the unreachable `httpx.TimeoutException` branch and its import were removed; a missing new thread id is now captured in Sentry like the other creation failures; Sentry captures for thread-list, delete, create and message-processing failures each have a test (each fails if its capture call is removed); the JSON-log decision became `should_use_json_logs()` with parametrized cases (the old test passed without its CI clause); `apps/whatsapp/.python-version` pins 3.13, the version the Docker image uses, and the suite passes on it; the dead `META_WABA_ID` block and the legacy `ngrok` host were removed from `.env.example`.
+
+Decided, no change: the maintenance check runs before the `!d ` filter, so a staging instance in maintenance mode answers a developer's `!d ` message with the maintenance notice. This matches the legacy order and is harmless, so it stays.
 
 #### Notes for the PR description (do not lose these)
 
