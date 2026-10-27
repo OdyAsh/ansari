@@ -24,15 +24,16 @@ gates:
     status: approved
     approved_at: '2026-10-25T08:16:16.104Z'
   pr:
-    status: pending
+    status: approved
     requested_at: '2026-10-27T07:05:18.575Z'
+    approved_at: '2026-10-27T07:46:54.822Z'
   verify-approval:
     status: pending
 iteration: 1
 build_complete: false
 history: []
 started_at: '2026-10-25T06:51:50.273Z'
-updated_at: '2026-10-27T07:05:18.576Z'
+updated_at: '2026-10-27T07:46:54.823Z'
 context_refreshes:
   - boundary: enter:plan
     at: '2026-10-25T08:08:13.901Z'
@@ -52,4 +53,4 @@ context_refreshes:
   - boundary: enter:review
     at: '2026-10-27T06:09:40.030Z'
     acknowledged_at: '2026-10-27T06:22:14.280Z'
-pr_ready_for_human: true
+pr_ready_for_human: false
