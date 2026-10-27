@@ -25,28 +25,14 @@ gates:
     approved_at: '2026-10-25T08:16:16.104Z'
   pr:
     status: pending
+    requested_at: '2026-10-27T07:05:18.575Z'
   verify-approval:
     status: pending
-iteration: 2
-build_complete: true
-history:
-  - iteration: 1
-    plan_phase: import_service
-    build_output: ''
-    reviews:
-      - model: claude
-        verdict: REQUEST_CHANGES
-        file: >-
-          D:\CS\projects\ansari-projects\ansari\.builders\spir-321\codev\projects\321-rfc-whatsapp-support-in-the-mo\321-import_service-iter1-claude.txt
-  - iteration: 1
-    build_output: ''
-    reviews:
-      - model: claude
-        verdict: REQUEST_CHANGES
-        file: >-
-          D:\CS\projects\ansari-projects\ansari\.builders\spir-321\codev\projects\321-rfc-whatsapp-support-in-the-mo\321-review-iter1-claude.txt
+iteration: 1
+build_complete: false
+history: []
 started_at: '2026-10-25T06:51:50.273Z'
-updated_at: '2026-10-27T06:58:56.617Z'
+updated_at: '2026-10-27T07:05:18.576Z'
 context_refreshes:
   - boundary: enter:plan
     at: '2026-10-25T08:08:13.901Z'
@@ -66,3 +52,4 @@ context_refreshes:
   - boundary: enter:review
     at: '2026-10-27T06:09:40.030Z'
     acknowledged_at: '2026-10-27T06:22:14.280Z'
+pr_ready_for_human: true
