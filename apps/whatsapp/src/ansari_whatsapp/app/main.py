@@ -157,7 +157,7 @@ async def root():
 
 
 @app.get("/whatsapp/v2")
-async def verification_webhook(request: Request) -> str | None:
+async def verification_webhook(request: Request) -> HTMLResponse:
     """
     Handles the WhatsApp webhook verification request.
 

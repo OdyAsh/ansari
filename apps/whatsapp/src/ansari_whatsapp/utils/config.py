@@ -3,7 +3,7 @@
 
 from functools import lru_cache
 
-from pydantic import HttpUrl, SecretStr, Field, field_validator
+from pydantic import HttpUrl, SecretStr, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -103,6 +103,15 @@ class WhatsAppSettings(BaseSettings):
     MOCK_META_API: bool = False
 
     ########### Validators ###########
+
+    @model_validator(mode="after")
+    def refuse_shared_mock_token_outside_local(self):
+        """One token for every BSUID would put every WhatsApp user in the same account and thread."""
+        if self.MOCK_AUTH_TOKEN and self.MOCK_AUTH_TOKEN.get_secret_value() and self.DEPLOYMENT_TYPE != "local":
+            raise ValueError(
+                "MOCK_AUTH_TOKEN gives every user the same account; it is only allowed when DEPLOYMENT_TYPE=local"
+            )
+        return self
 
     @field_validator("ORIGINS", mode="before")
     def parse_origins(cls, v):

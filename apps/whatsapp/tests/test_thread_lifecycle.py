@@ -147,7 +147,7 @@ def test_expired_thread_flow_against_the_real_client_makes_the_expected_calls(mo
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append((request.method, request.url.path, request.headers.get("authorization")))
         if request.method == "GET":
-            return httpx.Response(200, json=[{"thread_id": "old", "updated_at": four_hours_ago}])
+            return httpx.Response(200, json=[{"thread_id": "old", "source": "whatsapp", "updated_at": four_hours_ago}])
         if request.method == "DELETE":
             return httpx.Response(200, json={"message": "Thread deleted successfully"})
         return httpx.Response(200, json={"thread_id": "new"})
@@ -162,6 +162,29 @@ def test_expired_thread_flow_against_the_real_client_makes_the_expected_calls(mo
         ("DELETE", "/api/v2/threads/old", token),
         ("POST", "/api/v2/threads", token),
     ]
+
+
+def test_only_whatsapp_threads_count_so_another_clients_thread_is_never_deleted(monkeypatch):
+    seen = []
+    threads = [
+        {"thread_id": "web-newest", "source": "web", "updated_at": "2026-10-27T10:00:00.000Z"},
+        {"thread_id": "wa", "source": "whatsapp", "updated_at": "2026-10-26T10:00:00.000Z"},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        return httpx.Response(200, json=threads)
+
+    client = _real_client(monkeypatch, handler)
+
+    assert asyncio.run(client.get_last_thread_info("jwt"))["thread_id"] == "wa"
+    assert asyncio.run(
+        _real_client(monkeypatch, lambda r: httpx.Response(200, json=threads[:1])).get_last_thread_info("jwt")
+    ) == {
+        "thread_id": None,
+        "last_message_time": None,
+    }
+    assert [m for m, _ in seen] == ["GET"]
 
 
 def test_creation_response_without_a_thread_id_is_a_failure_the_user_hears_about(monkeypatch):

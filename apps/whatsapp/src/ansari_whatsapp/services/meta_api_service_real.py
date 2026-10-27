@@ -63,7 +63,6 @@ class MetaApiServiceReal(MetaApiServiceBase):
 
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error sending typing indicator: {e.response.status_code}")
-            logger.error(f"Response body: {e.response.text}")
             # Only capture 5xx errors (Meta's fault, not ours)
             if e.response.status_code >= 500:
                 sentry_sdk.set_tag("error_type", "meta_api_failure")
@@ -140,7 +139,6 @@ class MetaApiServiceReal(MetaApiServiceBase):
 
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error sending message: {e.response.status_code}")
-            logger.error(f"Response body: {e.response.text}")
             # Only capture 5xx errors (Meta's fault, not ours)
             if e.response.status_code >= 500:
                 sentry_sdk.set_tag("error_type", "meta_api_failure")

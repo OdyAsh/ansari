@@ -130,7 +130,9 @@ class AnsariClientReal(AnsariClientBase):
         """
         Get information about the user's most recently active thread.
 
-        apps/api lists a user's threads newest-first by `updated_at`, which it bumps on every message.
+        apps/api lists a user's threads newest-first by `updated_at`, which it bumps on every message. Only threads
+        this service created (`source` is `whatsapp`) count, so an expired one is never mistaken for, or deleted
+        in place of, a thread from another client.
 
         Args:
             token (str): The user's JWT from apps/auth.
@@ -144,7 +146,7 @@ class AnsariClientReal(AnsariClientBase):
         try:
             response = await self.client.get(f"{self.base_url}/api/v2/threads", headers=self._auth(token))
             response.raise_for_status()
-            threads = response.json()
+            threads = [t for t in response.json() if t.get("source") == "whatsapp"]
             if not threads:
                 return {"thread_id": None, "last_message_time": None}
             return {"thread_id": threads[0]["thread_id"], "last_message_time": threads[0]["updated_at"]}
@@ -217,24 +219,6 @@ class AnsariClientReal(AnsariClientBase):
                 if not full_response:
                     logger.warning("Received empty response from backend")
                     return ""
-
-                # # TEMPORARY: Save response to file for testing/mocking purposes
-                # # Comment out this block when you don't want to update the sample response file
-                # try:
-                #     from pathlib import Path
-
-                #     # Create the directory if it doesn't exist
-                #     sample_dir = Path.cwd() / "docs" / "sample_backend_responses"
-                #     sample_dir.mkdir(parents=True, exist_ok=True)
-
-                #     # Write the response to the file
-                #     sample_file = sample_dir / "sample_ansari_llm_response.txt"
-                #     with open(sample_file, "w", encoding="utf-8") as f:
-                #         f.write(full_response)
-                #     logger.info(f"Saved backend response to {sample_file}")
-                # except Exception as e:
-                #     logger.warning(f"Failed to save sample response: {e}")
-                # # END TEMPORARY CODE
 
                 return full_response
         except httpx.TimeoutException as e:

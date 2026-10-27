@@ -2,7 +2,7 @@
 
 ## Summary
 
-The legacy Python WhatsApp service now lives in the monorepo as `apps/whatsapp`. It identifies users by their business-scoped user ID (BSUID), gets a JWT for them from `apps/auth`, and talks to `apps/api`, keeping one thread per user that is replaced after 3 hours of silence. Four phases (import, BSUID/JWT, thread lifecycle, environments and docs) were built and reviewed; 70 tests pass. It has run against a real `apps/api` and `apps/auth`, and Meta accepted one real send to a BSUID, but a real phone's message has never reached the new service, the Docker image has never been built, and the `apps/auth` `/whatsapp` route does not exist yet (the sign-in is mocked by owner decision).
+The legacy Python WhatsApp service now lives in the monorepo as `apps/whatsapp`. It identifies users by their business-scoped user ID (BSUID), gets a JWT for them from `apps/auth`, and talks to `apps/api`, keeping one thread per user that is replaced after 3 hours of silence. Four phases (import, BSUID/JWT, thread lifecycle, environments and docs) were built and reviewed; 77 tests pass. It has run against a real `apps/api` and `apps/auth`, and Meta accepted one real send to a BSUID, but a real phone's message has never reached the new service, the Docker image has never been built, and the `apps/auth` `/whatsapp` route does not exist yet (the sign-in is mocked by owner decision).
 
 ## Spec Compliance
 
@@ -84,6 +84,18 @@ Only Claude was consulted (a decision for this environment, since the other mode
 - **Concern**: dead `META_WABA_ID` documentation and a legacy `ngrok` host → **Addressed**: removed.
 - **Concern**: maintenance check runs before the `!d ` filter → **N/A**: matches the legacy order and is harmless; recorded in the plan.
 
+### PR review (PR #327, Round 1) , REQUEST_CHANGES
+
+#### Claude
+- **Concern**: nothing stops `MOCK_AUTH_CLIENT=True` with `MOCK_AUTH_TOKEN` outside `local`, which would put every user in one account and thread → **Addressed**: the settings refuse to load with `MOCK_AUTH_TOKEN` unless `DEPLOYMENT_TYPE=local`; tested, and the tests fail when the guard is disabled. A mocked sign-in without the token hands out fake tokens a real `apps/api` rejects, so it cannot serve real users anywhere; a real deployment needs the `apps/auth` `/whatsapp` route.
+- **Concern**: `_resolve_thread` could delete a thread from another client → **Addressed**: only `whatsapp` threads count; tested, fails without the filter.
+- **Concern**: Meta's raw error body was logged, against the README → **Addressed**: only the status code is logged; tested for both send paths, fails with the body logging restored.
+- **Concern**: dead commented-out debug block → **Addressed**: removed.
+- **Concern**: wrong return annotation on `verification_webhook` → **Addressed**.
+- **Concern**: `pytest` in runtime dependencies; `requires-python` and ruff `py310` against a 3.13 image; `await request.json()` outside the try block → **N/A** here: legacy packaging and behaviour, listed as follow-ups.
+- **Concern**: Docker image never built; CI never run on a runner → **N/A**: stated in the PR; neither can be done from this machine.
+See `codev/projects/321-rfc-whatsapp-support-in-the-mo/321-review-iter1-rebuttals.md`.
+
 ## Lessons Learned
 
 ### What Went Well
@@ -133,3 +145,5 @@ No flaky tests encountered in `apps/whatsapp`. On native Windows, porch's whole-
 - Make the `whatsapp` CI job a required check on `develop` (needs a repo admin; the job has not yet run on a GitHub runner).
 - Occasional manual sweep: delete all but the newest `whatsapp` thread per user.
 - Remove the dead legacy `ORIGINS` and CORS middleware if no browser calls this service.
+- Packaging clean-up: move `pytest` to the `dev` extra, align `requires-python` and ruff `target-version` with the 3.13 image, and move `await request.json()` inside the webhook's try block (a signature-valid non-JSON body currently returns 500).
+- A real deployment needs the real `apps/auth` `/whatsapp` route: the mocked sign-in cannot serve real users outside `local` (fake tokens are rejected by `apps/api`, and a shared real token is refused by the settings).

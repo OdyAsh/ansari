@@ -132,6 +132,37 @@ def test_mock_auth_same_bsuid_same_user_new_bsuid_new_user():
     assert first != other
 
 
+@pytest.mark.parametrize(("deployment_type", "allowed"), [("local", True), ("staging", False), ("production", False)])
+def test_shared_mock_token_is_refused_outside_local(monkeypatch, deployment_type, allowed):
+    from ansari_whatsapp.utils.config import WhatsAppSettings
+
+    monkeypatch.setenv("DEPLOYMENT_TYPE", deployment_type)
+    monkeypatch.setenv("MOCK_AUTH_TOKEN", "a.real.jwt")
+    get_settings.cache_clear()
+    try:
+        if allowed:
+            assert WhatsAppSettings().MOCK_AUTH_TOKEN.get_secret_value() == "a.real.jwt"
+        else:
+            with pytest.raises(ValueError, match="MOCK_AUTH_TOKEN"):
+                WhatsAppSettings()
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()
+
+
+def test_an_empty_mock_token_is_fine_in_any_environment(monkeypatch):
+    from ansari_whatsapp.utils.config import WhatsAppSettings
+
+    monkeypatch.setenv("DEPLOYMENT_TYPE", "production")
+    monkeypatch.setenv("MOCK_AUTH_TOKEN", "")
+    get_settings.cache_clear()
+    try:
+        assert WhatsAppSettings().DEPLOYMENT_TYPE == "production"
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()
+
+
 def test_mock_auth_returns_the_configured_real_token_when_one_is_set(monkeypatch):
     monkeypatch.setenv("MOCK_AUTH_TOKEN", "a.real.jwt")
     get_settings.cache_clear()
@@ -152,7 +183,9 @@ def test_ansari_client_calls_api_with_jwt_and_reads_the_event_stream(monkeypatch
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.method, request.url.path, request.headers.get("authorization")))
         if request.url.path == "/api/v2/threads" and request.method == "GET":
-            return httpx.Response(200, json=[{"thread_id": "t1", "updated_at": "2026-10-25T10:00:00.000Z"}])
+            return httpx.Response(
+                200, json=[{"thread_id": "t1", "source": "whatsapp", "updated_at": "2026-10-25T10:00:00.000Z"}]
+            )
         if request.url.path == "/api/v2/threads":
             return httpx.Response(200, json={"thread_id": "t2"})
         return httpx.Response(
