@@ -1,7 +1,7 @@
 id: '321'
 title: rfc-whatsapp-support-in-the-mo
 protocol: spir
-phase: implement
+phase: review
 plan_phases:
   - id: import_service
     title: Import the Python service as is
@@ -14,8 +14,8 @@ plan_phases:
     status: complete
   - id: environments_and_docs
     title: Maintenance mode, staging filter, local testing and docs
-    status: in_progress
-current_plan_phase: environments_and_docs
+    status: complete
+current_plan_phase: null
 gates:
   spec-approval:
     status: approved
@@ -28,7 +28,7 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history:
   - iteration: 1
     plan_phase: import_service
@@ -39,7 +39,7 @@ history:
         file: >-
           D:\CS\projects\ansari-projects\ansari\.builders\spir-321\codev\projects\321-rfc-whatsapp-support-in-the-mo\321-import_service-iter1-claude.txt
 started_at: '2026-10-25T06:51:50.273Z'
-updated_at: '2026-10-27T06:01:20.122Z'
+updated_at: '2026-10-27T06:09:40.030Z'
 context_refreshes:
   - boundary: enter:plan
     at: '2026-10-25T08:08:13.901Z'
@@ -56,3 +56,5 @@ context_refreshes:
   - boundary: plan-phase:environments_and_docs
     at: '2026-10-25T16:14:17.696Z'
     acknowledged_at: '2026-10-27T05:52:35.516Z'
+  - boundary: enter:review
+    at: '2026-10-27T06:09:40.030Z'
