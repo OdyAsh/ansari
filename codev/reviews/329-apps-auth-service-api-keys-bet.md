@@ -2,7 +2,7 @@
 
 ## Summary
 
-apps/auth gains service identity through `@better-auth/api-key` (pinned to core 1.7.7): a service is one credential-less auth user, its keys are issued only by `apps/auth/scripts/service-keys.ts`, and the plugin's HTTP surface is blocked. Phase 6 adds `POST /api/whatsapp/session`, which turns a `whatsapp: mint` key and a BSUID into the ordinary EdDSA `{sub, sid}` JWT, only ever for a WhatsApp user. A second reserved domain, `@noreply.askansari.ai`, is refused on every public path. Seven phases, each approved by Codex (the Gemini lane was skipped in every round). The end-to-end test shows an exchange token passing apps/api's `requireUser` unchanged, and apps/api gains no WhatsApp code. Two items stay open, neither of which this PR can close: migration `0001` (with the `AUTH_DEPLOYED_THROUGH` bump at the rebase after spec 300's cutover), and the staging smoke, which #327's builder runs.
+apps/auth gains service identity through `@better-auth/api-key` (pinned to core 1.7.7): a service is one credential-less auth user, its keys are issued only by `apps/auth/scripts/service-keys.ts`, and the plugin's HTTP surface is blocked. Phase 6 adds `POST /api/whatsapp/session`, which turns a `whatsapp: mint` key and a BSUID into the ordinary EdDSA `{sub, sid}` JWT, only ever for a WhatsApp user. A second reserved domain, `@noreply.askansari.ai`, is refused on every public path. Seven phases, each approved by Codex (the Gemini lane was skipped in every round). The end-to-end test shows an exchange token passing apps/api's `requireUser` unchanged, and apps/api gains no WhatsApp code. Two items stay open, neither of which this PR can close: applying migration `0001` to staging before the merge (owner decision, 2026-10-28; production gets the whole auth journal at its cutover), and the staging smoke, which #327's builder runs.
 
 ## Spec Compliance
 
@@ -10,7 +10,7 @@ Owner phase per the plan's criterion table. Where the plan named a test, that te
 
 **Service keys and scripts**
 - [x] Plugin pinned to exactly 1.7.7; core not bumped (Phase 1)
-- [x] `apikey` table in the `auth` schema; migration `0001` with `unique(provider_id, account_id)` and `auth.users.phone_number`, generated and reviewed as SQL; schema and journal-parity tests (Phase 1). Numbering by main and the `AUTH_DEPLOYED_THROUGH` bump happen at the rebase after spec 300's cutover (see Follow-up).
+- [x] `apikey` table in the `auth` schema; migration `0001` with `unique(provider_id, account_id)` and `auth.users.phone_number`, generated and reviewed as SQL; schema and journal-parity tests (Phase 1). `0001` is applied to staging before the merge; `AUTH_DEPLOYED_THROUGH` stays `null` until main sets it at the production cutover (see Follow-up).
 - [x] Boot refuses on `42P01` or a missing constraint, bound to `auth.account` and the exact column order (Phase 6, tightened in review iteration 1)
 - [x] Database unreachable at boot → starts, `/health` 503, recovers without a restart (Phase 6; production-shaped run, steps 4 to 5a)
 - [x] Blocked list derived from `apiKey().endpoints` (7 endpoints, 5 routed), the full variant list, `/verify` and `/delete-all-expired-api-keys` covered by the prefix; the prefix proven load-bearing (Phase 1)
@@ -187,7 +187,7 @@ Round 2: Codex APPROVE.
 ### PR review (Round 1)
 
 #### Codex (REQUEST_CHANGES)
-- **Concern**: merge is blocked because `AUTH_DEPLOYED_THROUGH` is `null`, there is no `0001` apply record, and staging is unverified → **Rebutted**: this is the agreed merge precondition, done at the rebase after spec 300's cutover. Bumping now would assert an apply that has not happened. It is stated in the PR body and the runbook.
+- **Concern**: merge is blocked because `AUTH_DEPLOYED_THROUGH` is `null`, there is no `0001` apply record, and staging is unverified → **Rebutted**: this is the agreed merge precondition, done at the rebase after spec 300's cutover. Bumping now would assert an apply that has not happened. It is stated in the PR body and the runbook. *(Superseded on 2026-10-28 by the owner's decision: no rebase step; `0001` goes to staging before the merge, and production gets the whole auth journal at its cutover. `AUTH_DEPLOYED_THROUGH` stays `null` in this PR. See Follow-up Items.)*
 - **Concern**: `grant-admin --revoke` on a noreply address bypasses the reserved-domain check → **Addressed** (docs) and **Rebutted** (code). A demotion only lowers a role, it is the runbook's repair for a promoted WhatsApp user, and the system domain has never been refused on revoke either. The overclaiming wording in `arch.md`, `RELEASE.md` and the script header is narrowed to "never grants". A regression test pins grant-refused and revoke-allowed, and goes red under the suggested change.
 
 ### PR review (Round 2)
@@ -213,7 +213,7 @@ Round 2: Codex APPROVE.
 - **R2**: `--name` and `--client-id` were unrestricted, so a pasted key would be printed and sent to Sentry, and a newline injected output → **Addressed**: `[A-Za-z0-9 ._-]{1,64}`, and values holding a key prefix, matching a secret-scanning pattern, or containing a 32-letter run (a key body without its prefix; one step past the request) are refused without being echoed. Ten refusal cases on both flags, plus accepted near misses. 10 tests are red with the check bypassed.
 - **R3**: the no-DSN exit-3 path depended on an uninitialised `Sentry.flush` answering false → **Addressed**: `scriptRecorder(undefined)` returns `unrecordedRecorder` (no capture, no flush), and the banner states the reason. New file `service-keys-no-dsn.test.ts` uses the real, never-initialised Sentry: exit 3, the key id in the banner, the write standing, Sentry still uninitialised. Red against the old choice. A capture with no client leaves no observable trace (`lastEventId` stays undefined; a control proved it), so the test checks the chosen path and its banner rather than the absence of a call.
 - **R4**: `--confirm` for `update-limits` and `revoke` was the service user's id, so a confirm from another key's show step still wrote → **Addressed**: it is bound to the key id. The show step and rotate's revoke hints print it, and the runbook and demo harness follow. Tests: the user's id and another key's id both write nothing (2 red against the old binding).
-- **Noted, no change** (per security): `AUTH_DEPLOYED_THROUGH` is null until the rebase; the boot check fails open on non-`42P01` errors by design; a leaked key can create up to its daily budget of new noreply users (the spec's threat model, visible as table growth).
+- **Noted, no change** (per security): `AUTH_DEPLOYED_THROUGH` stays null in this PR (main sets it at the production cutover); the boot check fails open on non-`42P01` errors by design; a leaked key can create up to its daily budget of new noreply users (the spec's threat model, visible as table growth).
 - Verified: apps/auth 459/459; packages/auth 252 + 1 skipped; apps/api doc and contract tests 118; typecheck and lint clean; the demo harness has the same exit tally and both checks pass. CI on 485e55f (pass 2) passed all four jobs.
 
 ## Lessons Learned
@@ -404,7 +404,7 @@ This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under 
 
 ## Follow-up Items
 
-- **Migration `0001` and the journal bump (merge precondition).** At the rebase after spec 300's production cutover, `AUTH_DEPLOYED_THROUGH` goes to `0001`, with a second `auth-journal-applied: 0001_api_key_phone` line in `RELEASE.md` (the `0000` line stays). First run the duplicate check on `auth.account (provider_id, account_id)`, then apply with `psql -X -v ON_ERROR_STOP=1 --single-transaction`: to staging before merge, and to production before the develop → main promote, with a verification after each. Steps are in `docs/cutover/service-keys-runbook.md`. apps/api's `DEPLOYED_THROUGH` is not touched.
+- **Migration `0001` (owner decision, 2026-10-28).** **Staging, before the merge:** the duplicate check on `auth.account (provider_id, account_id)`, then `0001` applied with `psql -X -v ON_ERROR_STOP=1 --single-transaction` and verified with the runbook's bound query. apps/auth refuses to boot without it, so the apply precedes the merge. **Production:** at the production cutover, the full auth journal as it stands then (`0000`, `0001` and any later migration) is applied in order before the promoted code deploys, owned by `docs/cutover/better-auth-cutover.md`. `develop` is not frozen. `AUTH_DEPLOYED_THROUGH` stays `null`, with no `auth-journal-applied` record in this PR (security architect; main to confirm): it is production truth, and main sets it at the cutover. apps/api's `DEPLOYED_THROUGH` is not touched.
 - **Staging smoke** (#327's builder): a phone-visible user, a phone-hidden user, and 5 messages in 1 s, using a key from the script. Expected: 5 answers, 1 user, 1 session. Recorded as a comment on PR #327. #327 also switches to `Authorization: Bearer` and the error shapes in the contract summary, and carries spec 321's amendment.
 - **Pre-existing Sentry request-data leak** on apps/auth's other paths (body and `Authorization` on events raised during a request; reproduction below). The security architect owns it as a separate develop fix. This PR scrubs only the exchange.
 - **Monorepo-wide pglite 30 s timeouts under load** (evidence under Flaky Tests), for main.
@@ -681,7 +681,7 @@ Read: after `APIKEY_RELATION_CHECK_TTL` both keys get 500, never 401 (3c, 3d); i
   - New test, `apps/auth/tests/service-keys-sentry.test.ts`. Default integrations stay ON; only the transport is a spy. The test runs create-key once with the script's printer and once printing through `console.log`.
   - Negative test: with the breadcrumb options removed, the `console.log` case leaks the key and goes red, and the stdout case still passes. So Codex's leak was real, and either guard alone stops it.
   - Lesson: a Sentry test with `defaultIntegrations: false` cannot show what production Sentry sends.
-- Green per package: `@ansari/auth` 220 + 1 skipped (the `DEPLOYED_THROUGH` parity check, pending the rebase), `ansari-auth` 338 (after iteration 2), `ansari-api` 1113 + 3 skipped. Root typecheck and lint pass.
+- Green per package: `@ansari/auth` 220 + 1 skipped (the `DEPLOYED_THROUGH` parity check, `null` until the production cutover), `ansari-auth` 338 (after iteration 2), `ansari-api` 1113 + 3 skipped. Root typecheck and lint pass.
 
 ### Phase 5: WhatsApp identity and session core (notes)
 

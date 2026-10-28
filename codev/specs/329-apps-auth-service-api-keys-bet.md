@@ -345,13 +345,13 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
 - **Client IP.** No per-IP rule on the exchange; `ROUTER_RULES` stays all `false`.
 - **Where secrets live.** The raw key lives in the consumer's secret variable and, once, in the create script's output; apps/auth holds its hash. Session tokens created by the exchange never leave apps/auth. Never log a raw key, a key hash, a session token, a raw driver error, a BSUID or a phone number. The phone number is stored in exactly one column and returned by nothing.
 - **Limits.** Every number lives in `packages/auth/src/limits.ts`.
-- **Sequencing.** develop is frozen for apps/auth and packages/auth until the spec 300 production cutover and its contract PR land. Spec, plan and implementation proceed; the PR does not merge before then and expects a rebase. The migration is `0001` in `packages/auth/drizzle`.
+- **Sequencing** (amended 2026-10-28, owner decision). The PR merges to `develop`, which deploys to staging, where `0000` is already applied; `develop` is not frozen, and further features land there before production. Staging: the duplicate check, then `0001` applied and verified, **before** the merge, because apps/auth refuses to boot without it. Production: at the production cutover, the full auth journal as it stands then (`0000`, `0001` and any later migration) is applied in order before the promoted code deploys, owned by `docs/cutover/better-auth-cutover.md`. The migration is `0001` in `packages/auth/drizzle`.
 - **Scope guard.** #314's verify route does not creep in. The leaderboard is not migrated.
 - **Process.** Explicit `git add` only; no AI attribution; commits `[Spec 329][Phase: x] type: message`; `.env` files are never read.
 
 ## Assumptions
 
-- The spec 300 cutover lands without changing `createAuth`'s plugin list, the account-route mounting or `BLOCKED_AUTH_PATHS` in a way that conflicts with this design. The rebase reconciles details.
+- The spec 300 cutover lands without changing `createAuth`'s plugin list, the account-route mounting or `BLOCKED_AUTH_PATHS` in a way that conflicts with this design. Any conflict is reconciled on the branch before merge.
 - BSUIDs follow Meta's documented shape (see Current State), but the exchange enforces only sanity bounds, so a format change by Meta does not refuse real users.
 - A BSUID is stable per user per business portfolio, until the user changes phone number: Meta then issues a new BSUID, which this spec treats as a new user (continuity is deferred; see Nice-to-know).
 - The WhatsApp service holds one key at a time (two during rotation) and is the only consumer of `whatsapp: mint`.
@@ -497,7 +497,7 @@ A small table of hashed keys with permissions and limits, verified by apps/auth'
 | CORS lets a browser call the exchange | Low | Medium | No allow-origin on any exchange response, tested |
 | A raw key mishandled at handoff | Medium | High | The runbook's direct-to-variable handoff; printed once; Sentry events carry no key material |
 | Migration `0001` collides, ships unapplied, or locks `auth.account` at a bad moment | Medium | High | Main numbers it; boot assertion; pre-apply duplicate check and quiet-window guidance in the runbook |
-| Rebase conflicts after the spec 300 cutover | High | Low | The PR waits; tests pin behaviour |
+| Conflicts with other work landing on `develop` | Medium | Low | Reconciled on the branch before merge; tests pin behaviour |
 | A plugin or core bump changes relied-on behaviour | Medium | Medium | Each behaviour pinned by a test; plugin pinned to core |
 | The stored phone number leaks (response, log, Better Auth output, apps/api) | Low | High | One column; `input: false` and `returned: false`; absent from `/api/account/me`; never-log list and capture tests; Sentry scrubbing |
 | A Meta format or enrolment change splits users | Low | Medium | Sanity bounds only, so real users are never refused; the creation-volume signal surfaces a jump; continuity is deferred work (Nice-to-know 19) |

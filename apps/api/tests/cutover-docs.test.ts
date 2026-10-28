@@ -483,12 +483,15 @@ describe('the service-keys runbook (spec 329)', () => {
     expect(rateLimitTimeWindow.max).toBe(24 * 60 * 60 * 1000);
   });
 
-  it('gives the pre-apply duplicate check and the lock it must plan for', () => {
-    const before = section('Before `0001`: the duplicate check');
-    expect(before).toMatch(/group by provider_id, account_id\s+having count\(\*\) > 1;/);
-    expect(before).toContain('**ACCESS EXCLUSIVE lock on `auth.account`**');
-    expect(before).toContain('psql -X -v ON_ERROR_STOP=1 --single-transaction');
-    expect(before).toMatch(/to staging before this PR merges, and to\s+production before the `develop` → `main` promotion/);
+  it('gives the staging apply before the merge (duplicate check, lock, verification) and leaves production to the cutover runbook', () => {
+    const apply = section('Applying `0001`: staging, before the merge');
+    expect(apply).toMatch(/group by provider_id, account_id\s+having count\(\*\) > 1;/);
+    expect(apply).toContain('**ACCESS EXCLUSIVE lock on `auth.account`**');
+    expect(apply).toContain('psql -X -v ON_ERROR_STOP=1 --single-transaction');
+    expect(apply).toContain('**on staging the apply precedes the merge**');
+    expect(apply).toMatch(/> Apply the whole auth journal in `_journal.json` order, one `psql -X -v ON_ERROR_STOP=1\s+> --single-transaction` per file\. The duplicate pre-check is needed only where data already\s+> exists \(staging now\)\./);
+    expect(apply).toContain('[`better-auth-cutover.md`](better-auth-cutover.md)');
+    expect(apply).not.toMatch(/rebase/i);
   });
 
   it('explains every exchange alert kind', () => {

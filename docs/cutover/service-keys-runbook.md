@@ -47,7 +47,7 @@ lines and exits 3: record the action in the [key log](#key-log) at once.
 
 ## Issuance
 
-1. The migration is applied (see [Before `0001`](#before-0001-the-duplicate-check)) and the
+1. The migration is applied (see [Applying `0001`](#applying-0001-staging-before-the-merge)) and the
    auth service is deployed with it.
 2. `create-service whatsapp`, then `create-service whatsapp --confirm whatsapp`.
 3. `create-key whatsapp --rate-max 60 --rate-window 60 --daily 3000 --name <purpose and date>
@@ -121,32 +121,51 @@ raise never needs a code change; a per-user limit change does (`limits.ts`):
 
 A value outside them is refused with nothing written.
 
-## Before `0001`: the duplicate check
+## Applying `0001`: staging, before the merge
 
 `packages/auth/drizzle/0001_api_key_phone.sql` creates `auth.apikey`, adds
-`auth.users.phone_number`, and adds `unique (provider_id, account_id)` to `auth.account`. The
-constraint fails to apply if the table already holds a duplicate pair. **Before applying, run
-this against the auth database and expect zero rows:**
-
-```sql
-select provider_id, account_id, count(*) as n
-from auth.account
-group by provider_id, account_id
-having count(*) > 1;
-```
-
-Any row: **stop**. Do not apply the migration; report the count (never the ids or account ids
-in a chat) to the security architect.
-
-Adding the constraint takes an **ACCESS EXCLUSIVE lock on `auth.account`**, a table every
-sign-in reads, while it builds the unique index. Apply it in a quiet window (the lowest-traffic
-hour), with `psql -X -v ON_ERROR_STOP=1 --single-transaction` naming the auth database, as
-`RELEASE.md` describes, and record the apply in the release notes as that document says.
+`auth.users.phone_number`, and adds `unique (provider_id, account_id)` to `auth.account`.
 
 The migration ships **before** the code that uses it: apps/auth refuses to start when
 `auth.apikey` or the constraint is missing, so a deploy that runs ahead of the migration fails
-its healthcheck instead of serving. Apply `0001` to staging before this PR merges, and to
-production before the `develop` → `main` promotion, then check both:
+its healthcheck instead of serving. `develop` deploys to staging, where `0000` is already
+applied, so **on staging the apply precedes the merge**: until `0001` is applied there, the
+merged apps/auth refuses to start on staging.
+
+The apply discipline and the scope of the duplicate check, as the main architect set them
+(2026-10-28):
+
+> Apply the whole auth journal in `_journal.json` order, one `psql -X -v ON_ERROR_STOP=1
+> --single-transaction` per file. The duplicate pre-check is needed only where data already
+> exists (staging now).
+
+On staging, in order:
+
+1. **The duplicate check.** The constraint fails to apply if `auth.account` already holds a
+   duplicate pair. Run this against the staging auth database and expect zero rows:
+
+   ```sql
+   select provider_id, account_id, count(*) as n
+   from auth.account
+   group by provider_id, account_id
+   having count(*) > 1;
+   ```
+
+   Any row: **stop**. Do not apply the migration; report the count (never the ids or account
+   ids in a chat) to the security architect.
+2. **The apply.** Adding the constraint takes an **ACCESS EXCLUSIVE lock on `auth.account`**,
+   a table every sign-in reads, while it builds the unique index. Apply `0001` in a quiet window
+   (the lowest-traffic hour), with `psql -X -v ON_ERROR_STOP=1 --single-transaction` naming the
+   auth database, as `RELEASE.md` describes.
+3. **The verification** below, then the merge.
+
+**Production** is not this runbook's: at the production cutover, the full auth journal as it
+stands then (`0000`, `0001` and any later migration) is applied in order before the promoted code
+deploys, owned by [`better-auth-cutover.md`](better-auth-cutover.md). The auth database is empty
+when the journal is applied there, so the constraint cannot fail at apply; the copy then runs
+against the final schema in its single transaction, where a duplicate aborts cleanly.
+
+Verify (both must be `t`):
 
 ```sql
 select to_regclass('auth.apikey') is not null as apikey,

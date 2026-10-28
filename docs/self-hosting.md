@@ -259,4 +259,6 @@ thresholds. There is no new environment variable.
 **Migration before code.** `packages/auth/drizzle/0001_api_key_phone.sql` must be applied to the
 auth database (after the duplicate check in the runbook, in a quiet window: it locks
 `auth.account`) before the `apps/auth` that uses it deploys; that `apps/auth` refuses to boot
-without it.
+without it. On a deployment that tracks Ansari's own order: staging gets `0001` before the merge,
+and production gets the whole auth journal, in order, at its cutover
+(`docs/cutover/better-auth-cutover.md`).

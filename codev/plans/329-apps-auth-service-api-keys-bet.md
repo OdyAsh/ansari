@@ -17,7 +17,7 @@ The order follows three rules:
 2. **No commit publishes a surface it does not also guard.** The plugin is wired in the same commit that blocks its routes. The exchange route lands with its CORS placement, key check and timeouts in one commit.
 3. **Library before service.** The identity and session core lives in `packages/auth` and is tested on pglite, then the apps/auth route wraps it.
 
-Seven phases, each one commit in a single PR. The PR does not merge before the spec 300 production cutover and its contract PR; a rebase is expected.
+Seven phases, each one commit in a single PR. Deploy order (amended 2026-10-28, owner decision): the PR merges to `develop` (staging) once `0001` is applied and verified on staging; at the production cutover, the full auth journal as it stands then (`0000`, `0001` and any later migration) is applied in order before the promoted code deploys, owned by `docs/cutover/better-auth-cutover.md`.
 
 **The green command for every phase** is the root `pnpm test && pnpm typecheck && pnpm lint` (Turborepo, all packages), from a cold cache at least once per phase (`--force`), because shared-package changes in `packages/auth` reach apps/auth and apps/api.
 
@@ -94,7 +94,7 @@ Add the plugin and its table, and close its HTTP surface in the same commit. Pro
   - `BLOCKED_AUTH_PATHS` including them;
   - the `phone_number` additional user field (`input: false`, `returned: false`).
 - `apps/auth/src/middleware/blocked-paths.ts`: an `/api/auth/api-key` prefix rule beside `ADMIN_PREFIX`.
-- `packages/auth/tests/migration/auth-journal-parity.test.ts`: the "single fresh 0000" assertion becomes `idx` `[0, 1]`. **`AUTH_DEPLOYED_THROUGH`:** after the cutover, main sets it to `0000`. The deployed-state test then signs up against a database migrated through `0000` only, and the `phone_number` additional field makes that insert fail. So this PR bumps it to `0001`, **with main's agreement**, as the declaration that `0001` is applied before deploy; the matching `auth-journal-applied: 0001_…` release record follows main's convention. The bump is raised with main in the same message as the journal numbering, and lands at the rebase after the cutover.
+- `packages/auth/tests/migration/auth-journal-parity.test.ts`: the "single fresh 0000" assertion becomes `idx` `[0, 1]`. **`AUTH_DEPLOYED_THROUGH`:** after the cutover, main sets it to `0000`. The deployed-state test then signs up against a database migrated through `0000` only, and the `phone_number` additional field makes that insert fail. (Amended 2026-10-28, owner decision; security architect, pending main's confirmation:) `AUTH_DEPLOYED_THROUGH` is production truth, and production has nothing applied until the cutover, so this PR leaves it `null` and adds no `auth-journal-applied` record; main sets it at the cutover to the last migration applied then, with one record per migration.
 - `packages/auth/src/db.ts`: an explicit pool `max` (`AUTH_POOL_MAX`, 10, pg's default made visible) and `connectionTimeoutMillis` (`AUTH_POOL_CONNECT_TIMEOUT`, 5 s), so a starved pool is a loud error (500), never an unbounded wait during which `lock_timeout` and `statement_timeout` cannot fire. Both are constants in `db.ts`; they are pool settings, not rate limits.
 - `packages/auth/tests/schema/auth-schema.test.ts`: seven tables; `apikey` shape; `account (provider_id, account_id)` unique; `users.phone_number`.
 - `packages/auth/tests/config/api-key.test.ts` (new): probes 1, 2 and 4a as permanent pinning tests.
@@ -491,14 +491,14 @@ Each spec success criterion has exactly one acceptance owner. An earlier probe m
 | Risk | Probability | Impact | Mitigation |
 |------|-------------|--------|------------|
 | A probe contradicts the spec (e.g. `signJWT` overrides `exp`, `returned: false` leaks through an adapter path, the lock pattern waits) | Medium | High | Phase 1 runs every probe first; any difference stops the plan and goes to the security architect before phase 5 |
-| Migration numbering collides with the cutover | Medium | High | Message `architect:main` before committing the journal; rebase expected |
+| Migration numbering collides with another branch | Medium | High | Message `architect:main` before committing the journal |
 | Signing inside the transaction starves the shared pool | Low (designed out) | High | Sign after commit; explicit pool `max` and connect timeout; the pool-starvation probe reproduces the hang with signing inside, and passes with it outside |
 | The session token generator silently weakens | Low | High | The generator comes from the public `better-auth/crypto`; length and alphabet pinned by a test |
 | The lockfile has two `better-call` copies (zod peer variants) | Low | Low | Harmless here: the exchange maps every `valid: false` to 401 and classifies outages by the relation check, not by error class identity |
 | The judgement-based values prove too low or too high | Medium | Low | Alerts at one third of the caps, so a surge is seen first; `update-limits` changes a key's values without code; bounds are wide, so a raise needs no bound change |
 | The logger change alters an existing test's expectations | Low | Low | Its own commit; affected tests listed in the commit message |
 | Real-Postgres steps are manual, so they can be skipped | Medium | High | Their output is a review deliverable for phases 1, 5 and 6; the plan's acceptance criteria name them |
-| The rebase after the cutover reshapes `index.ts`, `app.ts` or `limits.ts` | High | Low | Tests pin behaviour, not line positions |
+| Other work on `develop` reshapes `index.ts`, `app.ts` or `limits.ts` | Medium | Low | Tests pin behaviour, not line positions |
 | The plugin's 7/5 shape changes on a future bump | Low | Medium | Both counts asserted; the prefix rule covers any new routed path anyway |
 
 ## Documentation Updates
