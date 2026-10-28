@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { createDb, type Db } from './db';
 import { getEnv, type AuthEnv } from './env';
 import { DEFAULT_RULE, LONGEST_WINDOW, ROUTER_RULES } from './limits';
+import { logBetterAuth } from './logger';
 import { deriveName } from './name';
 import { subscribeToNewsletter } from './newsletter';
 import {
@@ -31,6 +32,7 @@ import * as schema from './schema';
 export * as schema from './schema';
 export { createDb, pingDatabase, type Db } from './db';
 export { getEnv, resetEnvCache, type AuthEnv } from './env';
+export { logBetterAuth, redactError, redactLogArgs } from './logger';
 export * as limits from './limits';
 export { consumeWindow, keysSeenSince, peekWindow, touchKey, type WindowState } from './rate-limit-store';
 export { isSystemAddress, normalizeEmail, SYSTEM_EMAIL_DOMAIN } from './reserved';
@@ -291,6 +293,10 @@ export function createAuth(db: Db = createDb(), extensions: AuthExtensions = {})
     session: { expiresIn: 30 * DAY, updateAge: 1 * DAY },
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
+    // Every Error argument is reduced to {name, code} (logger.ts): a driver
+    // error must never reach a log line, and better-auth logs caught errors
+    // as they are (spec 329).
+    logger: { log: logBetterAuth },
     rateLimit: {
       enabled: true,
       storage: 'database',

@@ -47,3 +47,15 @@ With `API_KEY_PREFIX` removed from the middleware, the variant and absolute-form
 ### Phase 1: green command, and a pre-existing timeout under combined load
 
 The plan's green command, run in sequence (`pnpm turbo run test --force`, then `typecheck --force`, then `lint --force`), passes. Running all three as **one** parallel turbo invocation (`turbo run test typecheck lint --force`, 15 tasks at once) times out pglite `beforeAll` hooks at 30 s. It happened twice on this branch, both times in `@ansari/auth`. It also happens on a clean baseline worktree of this branch's HEAD (no code changes), there in `ansari-auth` (`secrets.test.ts`, `cutover/copy.test.ts`). It is the load-induced class `vitest.config.ts` already records (#290/#292), not something this change introduced. This phase's extra pglite file adds load, so CI's task grouping is worth watching.
+
+### Phase 2: redacted logger
+
+- The logger probe matches the plan (gate before phase 6). With `auth.apikey` dropped, `verifyApiKey` returns `valid: false` with `INVALID_API_KEY`, the same code as an unknown key, and the logged argument is `{"name":"DrizzleQueryError"…, "code":"42P01"}`-shaped. It is never an Error object, and never carries the driver message.
+- Proven both ways: with `logger: { disabled: true }` the non-error survival test and the outage test fail; with better-auth's default (unredacted) logger they fail too; with the redacted logger they pass.
+- Real pg server errors carry `name: 'error'` (node-postgres sets it from the protocol message type), so a raw pg error is logged as `{ name: 'error', code }`.
+- Residual: messages are not rewritten. The better-auth paths this service runs pass errors as arguments; the few that interpolate an error into the message string (OAuth discovery, token introspection) are not configured.
+- No existing test asserted better-auth log output, so none needed editing.
+
+## Flaky Tests
+
+- `apps/auth/tests/secrets.test.ts` and `apps/auth/tests/cutover/copy.test.ts` (spec 300): `beforeAll` hooks time out at 30 s when the whole monorepo's tests run in one turbo invocation (pglite cold starts under load, the class `vitest.config.ts` records as #290/#292). They pass when apps/auth runs alone (261/261) and in porch's checks. The same failure reproduces on a clean worktree of this branch's pre-change HEAD. **Not skipped:** one is the secrets test, so skipping is raised with the architect instead.
