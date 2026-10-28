@@ -240,7 +240,7 @@ revocation, the alerts and the eligibility repair.
 
 The WhatsApp service trades a Meta business-scoped user id (BSUID) for that user's JWT at
 `POST /api/whatsapp/session` on `apps/auth`'s public origin, with `Authorization: Bearer <key>`
-and `{"bsuid": "...", "phone_number": "..."?}`. It answers `200 {token}` (the same 15-minute
+and `{"bsuid": "...", "phone_number": "..."?}` (`phone_number` optional; `null` counts as absent). It answers `200 {token}` (the same 15-minute
 EdDSA `{sub, sid}` JWT every client gets), `400` for a malformed body, one identical `401` for
 every key refusal, `403` for a banned user, `429` with `X-Retry-After` for one user's budget,
 and `500` otherwise. The first exchange for a BSUID creates the user

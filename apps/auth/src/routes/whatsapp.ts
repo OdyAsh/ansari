@@ -4,7 +4,7 @@
 //
 //   POST /api/whatsapp/session
 //     Authorization: Bearer <api key>
-//     { "bsuid": "<BSUID>", "phone_number": "<digits>"? }
+//     { "bsuid": "<BSUID>", "phone_number": "<digits>"? }   (null = absent)
 //
 //   200 { token }  400 Invalid request  401 Unauthorized (every key refusal,
 //   one body)  403 Forbidden (banned)  429 Too many requests (this user's
@@ -75,7 +75,8 @@ function exchangeBody(body: unknown): ExchangeBody | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
   const { bsuid, phone_number: phone } = body as Record<string, unknown>;
   if (typeof bsuid !== 'string' || !BSUID.test(bsuid)) return null;
-  if (phone === undefined) return { bsuid, phone: null };
+  // JSON clients commonly send null for an absent optional field: absent, never a clear.
+  if (phone === undefined || phone === null) return { bsuid, phone: null };
   if (typeof phone !== 'string' || phone.length > PHONE_MAX || !PHONE.test(phone)) return null;
   return { bsuid, phone };
 }

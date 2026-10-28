@@ -127,7 +127,7 @@ Mounted outside Better Auth's handler path, like the account routes, so no route
 
 | | |
 |---|---|
-| Request | `Authorization: Bearer <api key>`; JSON body `{ "bsuid": "<BSUID>", "phone_number": "<digits>"? }`. `phone_number` is optional: Meta sends it (`from` / `wa_id`) always for users without a username, and for username users only inside a 30-day contact window, so its absence is normal |
+| Request | `Authorization: Bearer <api key>`; JSON body `{ "bsuid": "<BSUID>", "phone_number": "<digits>"? }`. `phone_number` is optional, and an explicit `null` counts as absent (amended in the review phase: JSON clients commonly send `null` for an absent field). Meta sends it (`from` / `wa_id`) always for users without a username, and for username users only inside a 30-day contact window, so its absence is normal |
 | 200 | `{ "token": "<JWT>" }`: the same EdDSA 15-minute `{sub, sid}` token apps/auth issues every client, signed from a live session of the BSUID's user |
 | 400 | `{ "message": "Invalid request" }`: body not JSON, too large, `bsuid` failing the sanity bounds, or `phone_number` present but failing its sanity bounds |
 | 401 | `{ "message": "Unauthorized" }`, byte-identical for **every** key refusal: missing, malformed, unknown, revoked, disabled, expired, budget-exhausted, rate-limited, wrong permission, or owned by another service |

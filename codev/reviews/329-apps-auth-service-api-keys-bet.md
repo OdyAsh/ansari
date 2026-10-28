@@ -94,6 +94,12 @@ Owner phase per the plan's criterion table. Where the plan named a test, that te
 - **Phase 5:** eligibility requires the exact address `whatsapp-<id>@noreply.askansari.ai`, which is stricter than any address under the domain. Lifetimes moved to `src/lifetimes.ts`. Signing after the commit is the approved plan (plan iteration 2, P1). The spec's §2 sentence that put signing inside the transaction was amended to match.
 - **Phase 6:** there is one constant beyond the plan's list, `EXCHANGE_ALERT_WINDOW`. The catalog lookup `hasAuthUniqueConstraint` lives in packages/auth, because apps/auth has no `drizzle-orm`. The window alert is deduplicated by the time since it last fired, because the plugin's window resets after a gap rather than on a fixed clock.
 - **Phase 7:** the key log is a table at the end of the runbook; the spec named it and the plan did not place it.
+- **Review phase (security architect):** an explicit `"phone_number": null` is now accepted as absent (200, a stored number untouched) instead of 400. The contract calls the field optional, and JSON clients commonly send `null` for an absent field. The spec's request row is amended, `docs/self-hosting.md` says so, and the body tests swap the 400 case for a 200 case (red without the route change).
+- **Review phase (gitleaks):** the probes' invented placeholder secrets are gone. `setProbeEnv` now calls `setAuthEnv` and overrides only `DATABASE_URL`, so the probes print the test issuer and audience (`auth.test.example`, `ansari-api-test`), not the `probe` ones shown in the appendix's earlier runs. The two literals stay in branch history, so `.gitleaks.toml` allowlists them as adjudicated fixtures (the run is under "Secret scan (gitleaks)" below).
+
+### Accepted residuals
+
+- **The eligibility read of account rows is not serialized against a concurrent insert of a second account row for the same user** (security architect, review phase). An account insert takes `KEY SHARE` on its user row, which `FOR NO KEY UPDATE` does not block, so a second row committed during the exchange's transaction is not seen by that exchange. No Better Auth path can create an account row for a noreply user (the create hook and every public path refuse the domain), so only an operator can write one. The next exchange reads it under the lock and refuses with `ineligible: accounts`, raising the alert, so the window is one exchange and its token (at most 15 minutes, `{sub, sid}` only, carrying no authority beyond that WhatsApp user's own).
 
 ## Consultation Feedback
 
@@ -179,6 +185,11 @@ Round 2: Codex APPROVE.
 #### Codex (REQUEST_CHANGES)
 - **Concern**: merge is blocked because `AUTH_DEPLOYED_THROUGH` is `null`, there is no `0001` apply record, and staging is unverified → **Rebutted**: this is the agreed merge precondition, done at the rebase after spec 300's cutover. Bumping now would assert an apply that has not happened. It is stated in the PR body and the runbook.
 - **Concern**: `grant-admin --revoke` on a noreply address bypasses the reserved-domain check → **Addressed** (docs) and **Rebutted** (code). A demotion only lowers a role, it is the runbook's repair for a promoted WhatsApp user, and the system domain has never been refused on revoke either. The overclaiming wording in `arch.md`, `RELEASE.md` and the script header is narrowed to "never grants". A regression test pins grant-refused and revoke-allowed, and goes red under the suggested change.
+
+### PR review (Round 2)
+
+#### Codex (COMMENT)
+- **Concern**: the runbook's post-apply check matched the constraint by name only, so a same-named constraint elsewhere could answer `t` → **Addressed**: the query is now the boot check's own (`auth.account`, `contype = 'u'`, columns in order). Run against Postgres 18 with the journal applied: `t|t`; with the constraint moved to `auth.decoy`: `t|f`; with the columns reversed: `t|f`.
 
 ## Lessons Learned
 

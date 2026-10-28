@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
 
 import { resetEnvCache } from '../../src/index';
+import { setAuthEnv } from '../../tests/helpers/auth-db';
 
 const DRIZZLE_DIR = fileURLToPath(new URL('../../drizzle/', import.meta.url));
 
@@ -64,16 +65,13 @@ export async function resetSchema(url: string): Promise<void> {
   }
 }
 
+/**
+ * The tests' own env (`setAuthEnv`, the adjudicated placeholders in
+ * .gitleaks.toml), with only the database URL pointed at the probe's container.
+ * Never invent new placeholder secrets here: each one is a gitleaks finding.
+ */
 export function setProbeEnv(url: string): void {
+  setAuthEnv('http://localhost:3100');
   process.env.DATABASE_URL = url;
-  process.env.BETTER_AUTH_SECRET = 'probe-secret-at-least-32-characters-long-00';
-  process.env.BETTER_AUTH_URL = 'http://localhost:3100';
-  process.env.CORS_ORIGIN = 'http://localhost:3100';
-  process.env.AUTH_LAYER_ORIGIN = 'https://api.probe.example';
-  process.env.NODE_ENV = 'test';
-  process.env.AUTH_JWT_ISSUER = 'https://auth.probe.example';
-  process.env.AUTH_JWT_AUDIENCE = 'ansari-api-probe';
-  process.env.RESEND_API_KEY = 're_probe_key_at_least_20_chars';
-  process.env.FRONTEND_URL = 'http://localhost:8081';
   resetEnvCache();
 }

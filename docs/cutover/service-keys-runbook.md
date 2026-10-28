@@ -145,9 +145,22 @@ production before the `develop` → `main` promotion, then check both:
 
 ```sql
 select to_regclass('auth.apikey') is not null as apikey,
-       exists (select 1 from pg_constraint
-               where conname = 'account_provider_id_account_id_unique') as constraint_present;
+       exists (select 1 from pg_catalog.pg_constraint c
+                 join pg_catalog.pg_class r on r.oid = c.conrelid
+                 join pg_catalog.pg_namespace n on n.oid = r.relnamespace
+                where n.nspname = 'auth' and r.relname = 'account'
+                  and c.conname = 'account_provider_id_account_id_unique' and c.contype = 'u'
+                  and array(select a.attname::text
+                              from unnest(c.conkey) with ordinality k(attnum, ord)
+                              join pg_catalog.pg_attribute a
+                                on a.attrelid = c.conrelid and a.attnum = k.attnum
+                             order by k.ord) = array['provider_id', 'account_id']
+             ) as constraint_present;
 ```
+
+Both must be `t`. The constraint check is the boot check's own query (`hasAuthUniqueConstraint`):
+it binds the name to `auth.account`, a unique constraint, and the columns in order, so a
+same-named constraint elsewhere cannot answer `t`.
 
 ## Alerts
 

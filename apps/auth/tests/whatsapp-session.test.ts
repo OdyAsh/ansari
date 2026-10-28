@@ -316,6 +316,19 @@ describe('the exchange', () => {
     expect((await exchange(bsuid)).status).toBe(200);
   });
 
+  it('an explicit "phone_number": null is absent: 200, and a stored number is left as it was', async () => {
+    const bsuid = newBsuid();
+    const phone = newPhone();
+    const { sub } = await claims(await tokenOf(await exchange(bsuid, phone)));
+    const res = await post(`{"bsuid":${JSON.stringify(bsuid)},"phone_number":null}`);
+    expect((await claims(await tokenOf(res))).sub).toBe(sub);
+    const { rows } = await service.client.query<{ phone_number: string | null }>(
+      'select phone_number from auth.users where id = $1',
+      [sub]
+    );
+    expect(rows[0]?.phone_number).toBe(phone);
+  });
+
   it('a phone number with a leading + is accepted', async () => {
     expect((await exchange(newBsuid(), remember(`+${digits(12)}`))).status).toBe(200);
   });
@@ -532,7 +545,6 @@ describe('the body (after a valid key)', () => {
     ['bsuid with a tab', '{"bsuid":"US.\\t123"}', 'application/json'],
     ['bsuid with a control character', '{"bsuid":"US.\\u0001123"}', 'application/json'],
     ['phone_number not a string', '{"bsuid":"US.1","phone_number":15551234567}', 'application/json'],
-    ['phone_number null', '{"bsuid":"US.1","phone_number":null}', 'application/json'],
     ['phone_number empty', '{"bsuid":"US.1","phone_number":""}', 'application/json'],
     ['phone_number over 32 characters', JSON.stringify({ bsuid: 'US.1', phone_number: '1'.repeat(33) }), 'application/json'],
     ['phone_number with letters', '{"bsuid":"US.1","phone_number":"1555abc"}', 'application/json'],
