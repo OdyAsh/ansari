@@ -39,3 +39,11 @@
   the request would block on its own lock. better-auth 1.7.7 has runWithTransaction/getCurrentAdapter; the plan must prove this on real Postgres.
 - Corrected my own claim: LIKE 'whatsapp-%' cannot use the default-collation email btree; removed.
 - signJWT is serverOnly, so /token's TOKEN_EXCHANGE_PER_SESSION is bypassed; the per-user budget replaces it.
+
+## 2026-10-28: spec iteration 3 (owner D1-D4 + security review round 2)
+
+- Owner: no BSUID regex (sanity bounds), BSUID raw, optional phone_number stored on auth.users (input:false, returned:false, never in /me),
+  session row written directly under FOR NO KEY UPDATE. Decisions 3 and 4 are still open.
+- Round 2 fixes: exchange mounted before corsFor; boot assertion only on definite 42P01/missing constraint (unreachable DB still starts);
+  consumeWindow on the pool outside the tx (else refusals roll it back); explicit iat/exp to signJWT (signJWT omits iat otherwise);
+  7 endpoints / 5 routed (serverOnly have no path); lock/statement timeouts; alerts counts-only, user id in log line.
