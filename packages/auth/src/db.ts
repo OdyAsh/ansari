@@ -56,3 +56,13 @@ export type Db = ReturnType<typeof createDb>;
 export async function pingDatabase(db: Db): Promise<void> {
   await db.execute(sql`select 1`);
 }
+
+/** True when the `auth` schema has the unique constraint `name` (a catalog read; apps/auth's boot check). */
+export async function hasAuthUniqueConstraint(db: Db, name: string): Promise<boolean> {
+  const result = await db.execute(sql`
+    select 1 from pg_catalog.pg_constraint c
+      join pg_catalog.pg_namespace n on n.oid = c.connamespace
+     where n.nspname = 'auth' and c.conname = ${name} and c.contype = 'u'
+  `);
+  return ((result as { rows?: unknown[] }).rows?.length ?? 0) > 0;
+}

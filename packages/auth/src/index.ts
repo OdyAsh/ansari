@@ -31,7 +31,7 @@ import { createResetPasswordSender, resendMailer, type Mailer } from './reset-em
 import * as schema from './schema';
 
 export * as schema from './schema';
-export { createDb, pingDatabase, type Db } from './db';
+export { createDb, hasAuthUniqueConstraint, pingDatabase, type Db } from './db';
 export { getEnv, resetEnvCache, type AuthEnv } from './env';
 export { logBetterAuth, redactError, redactLogArgs } from './logger';
 export * as limits from './limits';

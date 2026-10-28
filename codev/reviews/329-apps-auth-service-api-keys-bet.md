@@ -150,6 +150,52 @@ PASS  F4 real functions: 10 concurrent new users on a pool of 2 (sign after comm
 12/12 steps as expected.
 ```
 
+### Phase 6: production-shaped outage run (real Postgres), 2026-10-28
+
+`apps/auth/scripts/probes/exchange-outage-probe.ts`: apps/auth's real app with `NODE_ENV=production` and the real node-postgres pool (`AUTH_POOL_MAX` 10, 5 s connect timeout) against a `postgres:18` container started without `--rm`, which the probe stops and starts under the running service. Command:
+
+```
+docker run -d --name probe-pg-329-outage -e POSTGRES_PASSWORD=probe -p 55433:5432 postgres:18
+pnpm --filter ansari-auth exec tsx scripts/probes/exchange-outage-probe.ts postgres://postgres:probe@127.0.0.1:55433/postgres probe-pg-329-outage
+docker rm -f probe-pg-329-outage
+```
+
+Output, verbatim:
+
+```
+Postgres 18.6 (Debian 18.6-1.pgdg13+2); container probe-pg-329-outage
+PASS  1a boot assertion, schema present: assertSchema → true
+PASS  1b new BSUID, valid key: 200 in 80 ms (expected 200)
+whatsapp exchange failed: { name: 'Error', code: '55P03' }
+PASS  2  user row held FOR UPDATE elsewhere: 500 in 2027 ms (expected 500 within lock_timeout 2000 ms + slack)
+[Better Auth] ERROR: Failed to validate API key: { name: 'APIError' }
+PASS  3a unknown key, database up (primes the relation check): 401 in 9 ms (expected 401)
+      docker stop probe-pg-329-outage
+auth database: idle client error { name: 'error', code: '57P01' }
+auth database: idle client error { name: 'error', code: '57P01' }
+[Better Auth] ERROR: Failed to validate API key: { name: 'Error', code: 'ECONNREFUSED' }
+PASS  3b unknown key inside APIKEY_RELATION_CHECK_TTL (stated residual): 401 in 7 ms (expected 401 or 500)
+[Better Auth] ERROR: Failed to validate API key: { name: 'Error', code: 'ECONNREFUSED' }
+whatsapp exchange failed: { name: 'Error', code: 'ECONNREFUSED' }
+PASS  3c valid key after the TTL: 500 in 5 ms (expected 500)
+[Better Auth] ERROR: Failed to validate API key: { name: 'Error', code: 'ECONNREFUSED' }
+whatsapp exchange failed: { name: 'Error', code: 'ECONNREFUSED' }
+PASS  3d unknown key after the TTL: 500 in 5 ms (expected 500)
+auth boot: schema check failed, starting anyway { name: 'Error', code: 'ECONNREFUSED' }
+PASS  4  boot assertion, database down: assertSchema → true (expected true: start, /health reports)
+health: auth database unreachable Error
+PASS  4b /health with the database down: 503
+      docker start probe-pg-329-outage
+health: auth database unreachable Error
+PASS  5a /health recovers without a restart: 200
+PASS  5b valid key after recovery: 200 in 31 ms (expected 200)
+[Better Auth] ERROR: Failed to validate API key: { name: 'APIError' }
+PASS  5c unknown key after recovery: 401 in 5 ms (expected 401)
+ALL PASS
+```
+
+Read: after `APIKEY_RELATION_CHECK_TTL` both keys get 500, never 401 (3c, 3d); inside it the unknown key gets the stated 401 residual (3b). A user row held `FOR UPDATE` from another connection is a 500 at 2027 ms (`55P03`, the 2 s `lock_timeout`), not a hang (2). Every log line is `{name, code}`. Boot with the database down starts (4) and `/health` recovers without a restart (5a). The plan's "a lock held from another connection → 500 within the timeout" is owned by this run, since pglite has one connection.
+
 ## Flaky Tests
 
 ### `apps/auth/tests/secrets.test.ts` and `apps/auth/tests/cutover/copy.test.ts` (fixed with a targeted deadline)
@@ -354,3 +400,80 @@ This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under 
 - `tests/whatsapp.test.ts`, 26 tests on pglite. The session-token pin checks 20 written tokens, not one: a single token from the unrestricted generator lacks `-`/`_` about a third of the time.
 - **Mutation-tested**, each red, then restored (26/26 green): dropping the BSUID re-check, dropping the ban's session delete, the unrestricted generator, no margin, no admin check, clearing the phone when absent, and signing inside the transaction. The last one hangs pglite outright (one connection: signJWT waits on the open transaction, the pool-starvation hazard in miniature). It was run again against the source-level block alone, which goes red both for a wrapper that signs inside `db.transaction` and for a `signJWT` inside `decideUnderLock`.
 - Verified: @ansari/auth 246 + 1 skipped, ansari-auth 338, root typecheck and lint pass.
+
+## Pre-existing: Sentry request data
+
+Found in phase 6, 2026-10-28; reported to the security architect, who owns the fix as a separate develop PR (not widened here). apps/auth's `Sentry.init` on develop sets only `sendDefaultPii: false`, with default integrations. Sentry's HTTP/request-data integration still attaches the in-flight request to any event raised while a request is handled: its headers, `Authorization` included, and its body.
+
+**Reproduction** (pglite through `startService`, a spy transport, `SERVICE_SENTRY_OPTIONS` as `initSentry` uses them, 40 failed sign-ins so `SIGN_IN_FAILED_ALERT` (30/min) fires once). The test, verbatim, to drop into `apps/auth/tests/` (its own file: the Console integration patches `console` process-wide). `SERVICE_SENTRY_OPTIONS` is new in phase 6; on develop, spread `{ sendDefaultPii: false }` instead:
+
+```ts
+// Pre-existing (spec 300): Sentry's request-data integration attaches the
+// in-flight request's body and headers to an alert event raised during sign-in.
+import * as Sentry from '@sentry/node';
+import { afterAll, expect, it } from 'vitest';
+
+import { SERVICE_SENTRY_OPTIONS, sendFailedSignInAlert } from '../src/alerts';
+import { signIn, signUp, startService, type Service } from './helpers/service';
+
+const envelopes: unknown[] = [];
+let service: Service | undefined;
+
+afterAll(async () => {
+  await service?.close();
+  await Sentry.close();
+});
+
+it('a failed-sign-in alert event carries no password and no Authorization header', async () => {
+  Sentry.init({
+    dsn: 'https://public@o0.ingest.sentry.io/0',
+    environment: 'test',
+    ...SERVICE_SENTRY_OPTIONS,
+    transport: () => ({
+      send: async (envelope) => {
+        envelopes.push(envelope);
+        return {};
+      },
+      flush: async () => true,
+    }),
+  });
+  service = await startService({ failedSignInAlert: sendFailedSignInAlert });
+  await signUp(service, 'probe@example.com');
+  // SIGN_IN_FAILED_ALERT is 30 per minute: 40 failures cross it once.
+  for (let i = 0; i < 40; i++) {
+    await signIn(service, `probe${i}@example.com`, 'ProbePasswordMarker-123', {
+      headers: { authorization: 'Bearer SESSIONTOKENMARKER' },
+    });
+  }
+  await Sentry.flush(2000);
+  const events = envelopes.map((e) => (e as [unknown, [unknown, { request?: Record<string, unknown> }][]])[1][0][1]);
+  process.stdout.write(`EVENTS ${events.length}\n`);
+  for (const event of events) process.stdout.write(`REQUEST ${JSON.stringify(event.request)}\n`);
+  const text = JSON.stringify(envelopes);
+  expect(text).not.toContain('ProbePasswordMarker');
+  expect(text).not.toContain('SESSIONTOKENMARKER');
+}, 60_000);
+```
+
+**Output** (run 2026-10-28 on this branch; `sentry-trace` and `baggage` values elided). One event, and the assertion fails:
+
+```
+EVENTS 1
+REQUEST {"headers":{"host":"127.0.0.1:53108","connection":"keep-alive","origin":"http://localhost:3100","authorization":"Bearer SESSIONTOKENMARKER","content-type":"application/json","accept":"*/*","accept-language":"*","sec-fetch-mode":"cors","user-agent":"node","accept-encoding":"gzip, deflate","sentry-trace":"…","baggage":"…","content-length":"68"},"method":"POST","url":"http://127.0.0.1:53108/api/auth/sign-in/email","cookies":{},"data":"{\"email\":\"probe29@example.com\",\"password\":\"ProbePasswordMarker-123\"}"}
+   × a failed-sign-in alert event carries no password and no Authorization header 5307ms
+AssertionError: expected '[[{"event_id":"33cc86cf54ef4943a92f1a…' not to contain 'ProbePasswordMarker'
+```
+
+Fields found: `event.request.data`, the whole sign-in body (the **email and the password** of the request that crossed the threshold); `event.request.headers.authorization`, the bearer as sent. The list-walk alert is raised in the same request context, so the same applies to it.
+
+**The exchange's scrub and its negative control** (phase 6, in this PR): `scrubExchangeEvent` (`beforeSend`) reduces an event from `/api/whatsapp/session` to its method and path. `apps/auth/tests/whatsapp-session-sentry.test.ts`, "carry no body, Authorization header, BSUID, phone number or key", passes with it. With `beforeSend` removed from `SERVICE_SENTRY_OPTIONS`, the same test fails: the envelope's `request.headers.authorization` held `Bearer wa_<the raw key>`. The exchange's body was not attached in that run, because the alert fires during the key check, before the body is read; the scrub drops `data` anyway.
+
+## Phase 6: the exchange route, boot assertion and alerts (notes)
+
+- **Route** `apps/auth/src/routes/whatsapp.ts`, mounted ahead of `corsFor`; it answers every request to its path (other methods, `OPTIONS` and sub-paths get a bare 404), so nothing reaches `corsFor`. Order: bearer (missing or malformed → 401 with no query), `verifyApiKey` with `whatsapp: mint`, the relation check on every plugin refusal (cached for `APIKEY_RELATION_CHECK_TTL`), the service-user owner binding, `Content-Type`, `express.json` with `EXCHANGE_BODY_LIMIT` and a route-local error handler, the sanity bounds, resolve, `consumeWindow` on the pool, `issueWhatsappToken`.
+- **Boot** `apps/auth/src/boot.ts`, `assertSchema` before `listen()`: refuses only on `42P01` or an empty catalog result. The catalog lookup lives in packages/auth (`hasAuthUniqueConstraint`), because apps/auth has no `drizzle-orm` dependency.
+- **Alerts** in `alerts.ts`: per-key window and daily volume read from the verified key row (`requestCount`; `refillAmount − remaining` since `lastRefillAt`). `USAGE_EXCEEDED` / `RATE_LIMITED`, 401 volume, ineligible user and unresolvable service user count in in-process windows of `EXCHANGE_ALERT_WINDOW` (5 min). Events carry numbers, the refusal code and an 8-character sha256 prefix of the key id; the ineligible user's id goes to one `console.warn` line. One constant beyond the plan's list, `EXCHANGE_ALERT_WINDOW`, names that window. The plugin's rate-limit window resets after a gap longer than the window, not on a fixed clock, so the window alert is deduplicated by time since it last fired (one key window).
+- **Sentry**: `beforeSend: scrubExchangeEvent`, through the new `SERVICE_SENTRY_OPTIONS` that `initSentry` spreads. The scrub is exchange-only, as planned; the pre-existing leak on other paths is recorded above and owned by the security architect.
+- **Tests**: `whatsapp-session.test.ts` (75), `whatsapp-session-sentry.test.ts` (1, with the negative control above), `boot.test.ts` (6), and a route inventory plus a `ROUTER_RULES` pin in `public-face.test.ts`. "User deleted between resolve and lock" over HTTP uses a pglite trigger on the user's `rate_limit` row, which is written after the resolve and before the lock. The lock timeout and the stopped database are the real-Postgres run above.
+- **Mutation testing** (12 mutants on the route, app and alerts): 11 red. M2 (relation check before the bearer check) first survived, because a cached check from earlier tests hid the query; the zero-query test now moves the clock past the TTL first, and M2 is red. M7 (no explicit `Content-Type` check) is an equivalent mutant: body-parser 2.x skips a non-JSON body, and the bounds then answer the same 400. The check stays as the plan's explicit guard.
+- **Verified**: `ansari-auth` 430 tests, `@ansari/auth` 246 + 1 skipped, root `pnpm typecheck` and `pnpm lint`, `npm run build`. `ansari-api`'s full run had 12 files fail on 30 s hook timeouts at load average about 65; all 12 pass in isolation (95 + 94 tests). Nothing in apps/api changed.

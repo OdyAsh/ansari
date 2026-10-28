@@ -198,3 +198,42 @@ export const EXCHANGE_LOCK_TIMEOUT = 2 * SECOND_MS;
 
 /** The exchange's `statement_timeout`, for any slow statement in its transaction. */
 export const EXCHANGE_STATEMENT_TIMEOUT = 5 * SECOND_MS;
+
+// The WhatsApp exchange route (spec 329). The alert numbers are ALERTS, never
+// caps: each sends one Sentry event (counts, windows, hash prefixes) and
+// refuses nothing. They sit well below the key's own caps, so a surge is seen
+// before anything is refused.
+
+/**
+ * How long a successful `auth.apikey` relation check is trusted, in ms. Every
+ * plugin refusal runs the check, so an outage the plugin reports as an unknown
+ * key is a 500, not a 401; this bounds that cost under an unknown-key flood,
+ * and is also the length of the misclassification residual.
+ */
+export const APIKEY_RELATION_CHECK_TTL = 5 * SECOND_MS;
+
+/** The exchange's request body limit, in bytes: `bsuid` ≤ 256, `phone_number` ≤ 32, plus JSON. */
+export const EXCHANGE_BODY_LIMIT = 1024;
+
+/**
+ * Per-key alert: this many exchanges inside one of the key's rate-limit
+ * windows (the plugin's `requestCount`; 60 s for WHATSAPP_KEY_INITIAL). One
+ * third of WHATSAPP_KEY_INITIAL.rateLimitMax.
+ */
+export const WHATSAPP_EXCHANGE_KEY_ALERT = 20;
+
+/**
+ * Per-key alert: this many exchanges since the key's last daily refill
+ * (`refillAmount − remaining`). One third of WHATSAPP_KEY_INITIAL.refillAmount.
+ */
+export const WHATSAPP_EXCHANGE_DAILY_ALERT = 1000;
+
+/**
+ * The window of the exchange's in-process alerts, in seconds: the 401 volume,
+ * and once-per-window events for USAGE_EXCEEDED, RATE_LIMITED, an ineligible
+ * user and an unresolvable service user.
+ */
+export const EXCHANGE_ALERT_WINDOW = 5 * MINUTE;
+
+/** 401s from the exchange in one EXCHANGE_ALERT_WINDOW. A healthy consumer sees none outside a rotation. */
+export const EXCHANGE_UNAUTHORIZED_ALERT: LimitRule = { window: EXCHANGE_ALERT_WINDOW, max: 20 };

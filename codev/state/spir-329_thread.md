@@ -106,3 +106,12 @@
 - Surprise: a signJWT-inside-the-tx mutant HANGS pglite (single connection), the pool-starvation hazard in miniature. Caught by the source-level test.
 - Probe 4 rerun on real Postgres with new F1-F4 steps through the real functions: 12/12. First run misread F3, because drizzle wraps driver errors
   (the SQLSTATE is on .cause). Phase 6's 500 mapping and logging must read the cause, as redactError does.
+
+## 2026-10-28: phase 6 (exchange route, boot assertion, alerts)
+
+- POST /api/whatsapp/session built, mounted ahead of corsFor and answering every request to its path itself. Boot assertion refuses only on 42P01 or a missing constraint.
+- Production-shaped run on Postgres 18.6 (NODE_ENV=production, container stopped and started under the service): 13/13. 500 never 401 after the TTL, lock_timeout 500 at 2027 ms, /health recovers. Output in the review.
+- FINDING (pre-existing, spec 300), sent to security: Sentry's default request-data integration attaches the request body and Authorization header
+  to any event raised in a request, despite sendDefaultPii:false. The failed-sign-in alert event carried the sign-in email + password + bearer.
+  Security owns the develop fix; this PR scrubs the exchange path only (with a negative control). Reproduction is in the review.
+- apps/api full suite flaky at load ~65 (12 files hit 30 s timeouts); all pass in isolation.
