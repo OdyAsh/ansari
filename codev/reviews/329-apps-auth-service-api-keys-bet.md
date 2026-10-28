@@ -50,7 +50,7 @@ The plan's green command, run in sequence (`pnpm turbo run test --force`, then `
 
 ### Phase 2: redacted logger
 
-- The logger probe matches the plan (gate before phase 6). With `auth.apikey` dropped, `verifyApiKey` returns `valid: false` with `INVALID_API_KEY`, the same code as an unknown key, and the logged argument is `{"name":"DrizzleQueryError"…, "code":"42P01"}`-shaped. It is never an Error object, and never carries the driver message.
+- The logger probe matches the plan (gate before phase 6). With `auth.apikey` dropped, `verifyApiKey` returns `valid: false` with `INVALID_API_KEY`, the same code as an unknown key, and the logged arguments contain no Error object, include the code `42P01`, and never carry the driver message ("does not exist") or the key.
 - Proven both ways: with `logger: { disabled: true }` the non-error survival test and the outage test fail; with better-auth's default (unredacted) logger they fail too; with the redacted logger they pass.
 - Real pg server errors carry `name: 'error'` (node-postgres sets it from the protocol message type), so a raw pg error is logged as `{ name: 'error', code }`.
 - Residual: messages are not rewritten. The better-auth paths this service runs pass errors as arguments; the few that interpolate an error into the message string (OAuth discovery, token introspection) are not configured.
