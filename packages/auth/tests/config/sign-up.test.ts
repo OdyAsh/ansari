@@ -80,16 +80,27 @@ describe('guard order: validation → reserved/taken → strength', () => {
     expect(await userRow(email.toLowerCase())).toBeUndefined();
   });
 
-  it('a noreply address gets the response a taken address gets, with or without surrounding spaces', async () => {
-    // Validation runs first, so surrounding spaces are an invalid email (400) for
-    // every address; the reserved and the taken address still answer identically.
-    for (const pad of ['', '  ']) {
-      const reserved = await signUp({ email: `${pad}service-whatsapp@noreply.askansari.ai${pad}`, password: STRONG, name: 'X' });
-      const taken = await signUp({ email: `${pad}taken@example.com${pad}`, password: STRONG, name: 'X' });
-      expect(reserved.status).toBe(pad ? 400 : 409);
-      expect(reserved.status).toBe(taken.status);
-      expect(await reserved.json()).toEqual(await taken.json());
-    }
+  it('the answer depends only on the input shape, never on reserved / taken / fresh (no oracle)', async () => {
+    // Validation runs first (the legacy register order), so a padded address is
+    // one identical 400 for every class; unpadded, a noreply and a taken address
+    // are one identical 409. Compared byte for byte, not as separate statuses.
+    const fresh = `fresh-${Date.now()}@example.com`;
+    const answer = async (email: string) => {
+      const res = await signUp({ email, password: STRONG, name: 'X' });
+      return { status: res.status, body: await res.text() };
+    };
+    const padded = await Promise.all(
+      ['service-whatsapp@noreply.askansari.ai', 'taken@example.com', fresh].map((e) => answer(`  ${e}  `))
+    );
+    expect(padded[0]!.status).toBe(400);
+    expect(padded[1]).toEqual(padded[0]);
+    expect(padded[2]).toEqual(padded[0]);
+    expect(await userRow(fresh)).toBeUndefined();
+
+    const noreply = await answer('service-whatsapp@noreply.askansari.ai');
+    const taken = await answer('taken@example.com');
+    expect(noreply.status).toBe(409);
+    expect(taken).toEqual(noreply);
   });
 
   it.each([
