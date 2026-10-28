@@ -116,6 +116,15 @@ The capped red came at a 1-minute load of 249 and a 5-minute load of 376. `limit
 
 Under the cap at 28 loops (`cap4-load-1..3`, 30 s deadlines on develop), `apps/auth/tests/secrets.test.ts` took about 8.5 s in total and `tests/cutover/copy.test.ts` passed 64/64 (226-274 s for the file). Both passed at 30 s in every capped run here, including the scenario 1 pairs. The 100 s may be revisitable once this cap lands. Per-hook times were not instrumented here.
 
+## CMAP review (PR #332)
+
+- **codex: REQUEST_CHANGES.**
+  - (1) `test:coverage` lacked the root `package.json` input, and CI runs the pin through it. **Fixed** with a `test:coverage` block in `apps/api/turbo.json`. Overriding `inputs` replaces the inherited list, so `$TURBO_DEFAULT$` and `.env.ci` are repeated. Dry-run proof: with the block, removing the flag moves `ansari-api#test:coverage`'s hash (f0ac13d3 → 0ff54eeb); without it, the hash stays at ccded238. `outputs` remain `coverage/**`.
+  - (2) The regex accepted `--maxWorkers=999` or a duplicate overriding flag. **Fixed**: the pin asserts the exact script. `=64` now fails with `expected 'turbo run test -- --maxWorkers=64' to be 'turbo run test -- --maxWorkers=4'`.
+  - (3) "BUGFIX should not add `codev/reviews/*`." **Declined**: the architect asked for this review and its evidence.
+- **claude: APPROVE.** Its regex note is covered by codex (2). It rated the `test:coverage` gap as separate; it is fixed here anyway, since the edit is three lines in a file already in scope. It also noted that `4` is absolute, so on a machine with 4 or fewer cores the root run allows up to 4 workers per suite, where the default would be 3 or fewer. That is accepted: the measurement was taken on the 14-core development machine, the root run is a development-machine command, and CI never runs it.
+- **gemini:** the lane was skipped because the `agy` CLI exited with code 3 (a tooling failure, not a verdict).
+
 ## Lessons
 
 - A harness ratio is a proxy. The failure in this issue was concurrent vitest runs, and 28 busy loops reproduced it in only 5 of 11 uncapped runs (0 of 3 on a calm machine). Reproduce the real scenario before trusting a proxy's negative.

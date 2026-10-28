@@ -14,11 +14,13 @@ import { resolve } from 'path';
 const rootPackageJson = resolve(__dirname, '../../../package.json');
 
 describe('root test script', () => {
-  it('caps vitest workers with a number', () => {
+  // Exact, not a pattern: 4 is the measured value, and a looser match would
+  // pass an ineffective cap (`=64`) or a second flag overriding it.
+  it('caps vitest workers at the measured 4', () => {
     const { scripts } = JSON.parse(readFileSync(rootPackageJson, 'utf8')) as {
       scripts: Record<string, string>;
     };
 
-    expect(scripts.test).toMatch(/^turbo run test -- .*--maxWorkers=\d+\b/);
+    expect(scripts.test).toBe('turbo run test -- --maxWorkers=4');
   });
 });

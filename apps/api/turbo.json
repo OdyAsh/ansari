@@ -39,6 +39,13 @@
         "$TURBO_ROOT$/.gitleaks.toml",
         "$TURBO_ROOT$/package.json"
       ]
+    },
+
+    // CI runs the same pin through test:coverage, so it needs the root
+    // package.json too. Overriding `inputs` replaces the root task's list, so
+    // the inherited entries are repeated.
+    "test:coverage": {
+      "inputs": ["$TURBO_DEFAULT$", ".env.ci", "$TURBO_ROOT$/package.json"]
     }
   }
 }
