@@ -47,13 +47,14 @@ async function insertUser(id: string, email: string): Promise<void> {
 }
 
 describe('auth schema shape (spec success criteria)', () => {
-  it('has exactly the six Better Auth tables, all in the auth schema', async () => {
+  it('has exactly the seven Better Auth tables, all in the auth schema', async () => {
     const { rows } = await client.query<{ table_schema: string; table_name: string }>(
       `SELECT table_schema, table_name FROM information_schema.tables
         WHERE table_schema NOT IN ('pg_catalog', 'information_schema')`
     );
     expect(rows.map((r) => `${r.table_schema}.${r.table_name}`).sort()).toEqual([
       'auth.account',
+      'auth.apikey',
       'auth.jwks',
       'auth.rate_limit',
       'auth.session',
@@ -68,6 +69,7 @@ describe('auth schema shape (spec success criteria)', () => {
       'first_name',
       'last_name',
       'registered_via',
+      'phone_number',
       'role',
       'banned',
       'ban_reason',
@@ -90,8 +92,8 @@ describe('auth schema shape (spec success criteria)', () => {
 
   it('every id is a uuid, and every user reference is a uuid', async () => {
     const cols = await authColumns();
-    const ids = cols.filter((c) => c.column_name === 'id' || c.column_name === 'user_id');
-    expect(ids.length).toBe(8);
+    const ids = cols.filter((c) => ['id', 'user_id', 'reference_id'].includes(c.column_name));
+    expect(ids.length).toBe(10);
     for (const c of ids) expect(`${c.table_name}.${c.column_name}:${c.data_type}`).toMatch(/:uuid$/);
   });
 
@@ -112,7 +114,18 @@ describe('auth schema shape (spec success criteria)', () => {
     await expect(client.query(insert, [id, id])).rejects.toThrow(/account_user_id_provider_id_unique/);
   });
 
-  it('session and account cascade from auth.users; verification has no user reference', async () => {
+  it('auth.account has a unique (provider_id, account_id): one BSUID maps to one user (spec 329)', async () => {
+    const first = '33333333-3333-4333-8333-333333333333';
+    const second = '44444444-4444-4444-8444-444444444444';
+    await insertUser(first, 'wa-first@example.com');
+    await insertUser(second, 'wa-second@example.com');
+    const insert = `INSERT INTO auth.account (account_id, provider_id, user_id, updated_at)
+                    VALUES ('US.13491208655302741918', 'whatsapp', $1, now())`;
+    await client.query(insert, [first]);
+    await expect(client.query(insert, [second])).rejects.toThrow(/account_provider_id_account_id_unique/);
+  });
+
+  it('session, account and apikey cascade from auth.users; verification has no user reference', async () => {
     const { rows } = await client.query<{ table_name: string; delete_rule: string }>(
       `SELECT tc.table_name, rc.delete_rule
          FROM information_schema.referential_constraints rc
@@ -122,6 +135,7 @@ describe('auth schema shape (spec success criteria)', () => {
     );
     expect(rows.map((r) => `${r.table_name}:${r.delete_rule}`).sort()).toEqual([
       'account:CASCADE',
+      'apikey:CASCADE',
       'session:CASCADE',
     ]);
   });

@@ -5,6 +5,7 @@
 // Every setting below that the cutover depends on is pinned by a test in
 // tests/ that fails when the setting is removed.
 import { CLIENT_HEADER, CLIENT_SRC_PARAM, parseClientId } from '@ansari/types/attribution';
+import { apiKey } from '@better-auth/api-key';
 import { expo } from '@better-auth/expo';
 import { APIError, BASE_ERROR_CODES, betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
@@ -129,9 +130,10 @@ export type AuthExtensions = {
 };
 
 /**
- * Router paths that never answer: the whole admin plugin surface, the two
- * profile-changing routes, and change-password (spec 300). The plugin stays
- * only for its `role` and ban columns. No client changes a password while
+ * Router paths that never answer: the whole admin plugin surface, the
+ * api-key plugin's routes (spec 329), the two profile-changing routes, and
+ * change-password (spec 300). The admin plugin stays only for its `role` and
+ * ban columns. No client changes a password while
  * signed in, and Better Auth's route would skip the strength guard and keep
  * the other sessions alive; a future feature must add both. better-auth
  * matches `disabledPaths` exactly, so apps/auth also blocks every variant of
@@ -140,8 +142,34 @@ export type AuthExtensions = {
 export const ADMIN_PATHS: readonly string[] = Object.values(admin().endpoints).map(
   (endpoint) => endpoint.path
 );
+
+/**
+ * The api-key plugin's options (spec 329). Keys are created and verified only
+ * in process (apps/auth's operator script and its exchange route); its HTTP
+ * surface is blocked below. A key is never a session (`enableSessionForAPIKeys`
+ * stays false), the first characters of a key are not stored, and metadata
+ * carries the partner's client id.
+ */
+export const API_KEY_OPTIONS = {
+  enableMetadata: true,
+  enableSessionForAPIKeys: false,
+  startingCharactersConfig: { shouldStore: false },
+  rateLimit: { enabled: true },
+} as const;
+
+/**
+ * The api-key plugin's routed endpoints. Two of its seven endpoints
+ * (`verifyApiKey`, `deleteAllExpiredApiKeys`) are server-only and have no
+ * path, so they are filtered out rather than mapped to `undefined`.
+ */
+export const API_KEY_ENDPOINT_COUNT = Object.keys(apiKey(API_KEY_OPTIONS).endpoints).length;
+export const API_KEY_PATHS: readonly string[] = Object.values(apiKey(API_KEY_OPTIONS).endpoints)
+  .map((endpoint) => (endpoint as { path?: string }).path)
+  .filter((path): path is string => typeof path === 'string');
+
 export const BLOCKED_AUTH_PATHS: readonly string[] = [
   ...ADMIN_PATHS,
+  ...API_KEY_PATHS,
   '/change-email',
   '/update-user',
   '/change-password',
@@ -221,6 +249,15 @@ export function createAuth(db: Db = createDb(), extensions: AuthExtensions = {})
           required: false,
           input: false,
           fieldName: 'registeredVia',
+        },
+        // WhatsApp users only, written directly by the token exchange (spec
+        // 329). PII: no Better Auth path accepts or returns it.
+        phone_number: {
+          type: 'string',
+          required: false,
+          input: false,
+          returned: false,
+          fieldName: 'phoneNumber',
         },
       },
       // The profile copy in the app database cannot follow an email change
@@ -358,6 +395,8 @@ export function createAuth(db: Db = createDb(), extensions: AuthExtensions = {})
       // Kept for its `role` and ban columns; its HTTP surface is blocked in
       // apps/auth (spec 300).
       admin(),
+      // Service keys (spec 329); HTTP surface blocked, see API_KEY_PATHS.
+      apiKey(API_KEY_OPTIONS),
       rateLimitRetention,
     ],
   });

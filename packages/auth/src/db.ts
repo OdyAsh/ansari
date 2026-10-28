@@ -26,8 +26,26 @@ export function onPoolError(err: Error & { code?: string }): void {
   console.error('auth database: idle client error', { name: err.name, code: err.code });
 }
 
+/**
+ * pg's default pool size, written down so it is a decision (spec 329). The
+ * pool is shared by every route: sign-in, the JWKS, the account endpoints and
+ * the WhatsApp exchange.
+ */
+export const AUTH_POOL_MAX = 10;
+
+/**
+ * How long a query waits for a free pooled connection before failing (pg's
+ * default is forever). A starved pool is then a loud error, answered as a 500,
+ * never an unbounded wait during which no statement or lock timeout can fire.
+ */
+export const AUTH_POOL_CONNECT_TIMEOUT_MS = 5_000;
+
 export function createDb() {
-  const pool = new Pool({ connectionString: getEnv().DATABASE_URL });
+  const pool = new Pool({
+    connectionString: getEnv().DATABASE_URL,
+    max: AUTH_POOL_MAX,
+    connectionTimeoutMillis: AUTH_POOL_CONNECT_TIMEOUT_MS,
+  });
   pool.on('error', onPoolError);
   return drizzle({ client: pool, schema });
 }

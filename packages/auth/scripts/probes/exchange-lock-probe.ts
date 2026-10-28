@@ -1,0 +1,351 @@
+/**
+ * Probe 4 (spec 329, plan phase 1): the WhatsApp exchange's locking and pool
+ * behaviour against a REAL Postgres. pglite serializes connections, so none of
+ * this can be shown there. Operator-run, against a throwaway container only:
+ *
+ *   docker run --rm -d --name probe-pg -e POSTGRES_PASSWORD=probe -p 55432:5432 postgres:18
+ *   pnpm --filter ansari-auth exec tsx ../../packages/auth/scripts/probes/exchange-lock-probe.ts \
+ *     postgres://postgres:probe@127.0.0.1:55432/postgres
+ *
+ * The URL is an argument, never read from the environment, so this script can
+ * never be pointed at a real database by an inherited variable. It refuses any
+ * host other than 127.0.0.1 or localhost. It drops and recreates the `auth`
+ * schema from the journal.
+ *
+ * Every step runs under a deadline and reports PASS or FAIL; it never hangs.
+ * The output is pasted into the review (codev/reviews/329-*.md).
+ */
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+import { generateRandomString } from 'better-auth/crypto';
+import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Client, Pool } from 'pg';
+
+import { createAuth, resetEnvCache, type Db } from '../../src/index';
+import * as schema from '../../src/schema';
+
+const DRIZZLE_DIR = fileURLToPath(new URL('../../drizzle/', import.meta.url));
+const DEADLINE_MS = 10_000;
+
+type Result = { step: string; ok: boolean; detail: string };
+const results: Result[] = [];
+
+function record(step: string, ok: boolean, detail: string): void {
+  results.push({ step, ok, detail });
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${step}: ${detail}`);
+}
+
+class Deadline extends Error {}
+
+async function within<T>(ms: number, work: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Deadline(`no result within ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([work, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function errCode(err: unknown): string {
+  if (err instanceof Deadline) return 'DEADLINE';
+  const e = err as { code?: unknown; name?: unknown; message?: unknown };
+  return String(e.code ?? e.name ?? 'unknown');
+}
+
+async function connect(url: string): Promise<Client> {
+  const client = new Client({ connectionString: url });
+  await client.connect();
+  return client;
+}
+
+async function resetSchema(url: string): Promise<void> {
+  const client = await connect(url);
+  try {
+    await client.query('DROP SCHEMA IF EXISTS auth CASCADE');
+    const journal = JSON.parse(readFileSync(`${DRIZZLE_DIR}meta/_journal.json`, 'utf8')) as {
+      entries: { idx: number; tag: string }[];
+    };
+    for (const { tag } of [...journal.entries].sort((a, b) => a.idx - b.idx)) {
+      const text = readFileSync(`${DRIZZLE_DIR}${tag}.sql`, 'utf8');
+      for (const stmt of text.split('--> statement-breakpoint')) if (stmt.trim()) await client.query(stmt);
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+async function newUser(client: Client): Promise<string> {
+  const id = randomUUID();
+  await client.query(`INSERT INTO auth.users (id, name, email) VALUES ($1, 'Probe', $2)`, [
+    id,
+    `whatsapp-${id}@noreply.askansari.ai`,
+  ]);
+  return id;
+}
+
+const INSERT_SESSION = `INSERT INTO auth.session (token, expires_at, updated_at, user_id, ip_address, user_agent)
+                        VALUES ($1, now() + interval '30 days', now(), $2, '', '')`;
+const token = () => generateRandomString(32, 'a-z', 'A-Z', '0-9');
+
+async function sessionCount(client: Client, userId: string): Promise<number> {
+  const { rows } = await client.query<{ n: number }>(
+    'SELECT count(*)::int AS n FROM auth.session WHERE user_id = $1',
+    [userId]
+  );
+  return rows[0]!.n;
+}
+
+/** A: the exchange's own session insert, inside its locking transaction, does not wait. */
+async function stepSameTransaction(url: string): Promise<void> {
+  const step = 'A same-transaction session insert under FOR NO KEY UPDATE';
+  const a = await connect(url);
+  try {
+    const userId = await newUser(a);
+    await within(DEADLINE_MS, (async () => {
+      await a.query('BEGIN');
+      await a.query('SELECT id FROM auth.users WHERE id = $1 FOR NO KEY UPDATE', [userId]);
+      await a.query(INSERT_SESSION, [token(), userId]);
+      await a.query('COMMIT');
+    })());
+    record(step, (await sessionCount(a, userId)) === 1, 'committed without waiting; 1 session');
+  } catch (err) {
+    record(step, false, errCode(err));
+  } finally {
+    await a.end();
+  }
+}
+
+/** B: a ban on another connection waits for the exchange, then deletes its session. */
+async function stepBanWaits(url: string): Promise<void> {
+  const step = 'B concurrent ban waits for the exchange, then deletes its session';
+  const a = await connect(url);
+  const b = await connect(url);
+  try {
+    const userId = await newUser(a);
+    await a.query('BEGIN');
+    await a.query('SELECT id FROM auth.users WHERE id = $1 FOR NO KEY UPDATE', [userId]);
+    let banDoneAt = 0;
+    const ban = (async () => {
+      await b.query('BEGIN');
+      await b.query('UPDATE auth.users SET banned = true WHERE id = $1', [userId]);
+      await b.query('DELETE FROM auth.session WHERE user_id = $1', [userId]);
+      await b.query('COMMIT');
+      banDoneAt = Date.now();
+    })();
+    await sleep(300);
+    const waitedWhileLocked = banDoneAt === 0;
+    await a.query(INSERT_SESSION, [token(), userId]);
+    await a.query('COMMIT');
+    const exchangeCommittedAt = Date.now();
+    await within(DEADLINE_MS, ban);
+    const left = await sessionCount(a, userId);
+    record(
+      step,
+      waitedWhileLocked && banDoneAt >= exchangeCommittedAt && left === 0,
+      `ban waited: ${waitedWhileLocked}; ban finished after exchange commit: ${banDoneAt >= exchangeCommittedAt}; sessions left: ${left}`
+    );
+  } catch (err) {
+    record(step, false, errCode(err));
+  } finally {
+    await a.end();
+    await b.end();
+  }
+}
+
+/** C: a session insert from ANOTHER connection is not blocked (FK KEY SHARE vs NO KEY UPDATE). */
+async function stepOtherConnectionInsert(url: string): Promise<void> {
+  const step = 'C session insert from another connection does not wait on FOR NO KEY UPDATE';
+  const a = await connect(url);
+  const b = await connect(url);
+  try {
+    const userId = await newUser(a);
+    await a.query('BEGIN');
+    await a.query('SELECT id FROM auth.users WHERE id = $1 FOR NO KEY UPDATE', [userId]);
+    await within(2_000, b.query(INSERT_SESSION, [token(), userId]));
+    await a.query('COMMIT');
+    record(step, true, 'insert completed while the lock was held');
+  } catch (err) {
+    await a.query('ROLLBACK').catch(() => undefined);
+    record(step, false, errCode(err));
+  } finally {
+    await a.end();
+    await b.end().catch(() => undefined);
+  }
+}
+
+/** C': contrast, FOR UPDATE (the strong lock) DOES block the other connection's insert. */
+async function stepForUpdateBlocks(url: string): Promise<void> {
+  const step = "C' contrast: FOR UPDATE blocks another connection's session insert (the hazard)";
+  const a = await connect(url);
+  const b = await connect(url);
+  try {
+    const userId = await newUser(a);
+    await a.query('BEGIN');
+    await a.query('SELECT id FROM auth.users WHERE id = $1 FOR UPDATE', [userId]);
+    await b.query("SET statement_timeout = '1500ms'");
+    let code = 'none';
+    try {
+      await within(5_000, b.query(INSERT_SESSION, [token(), userId]));
+    } catch (err) {
+      code = errCode(err);
+    }
+    await a.query('ROLLBACK');
+    record(step, code === '57014', `other connection's insert: ${code} (57014 = cancelled by statement_timeout, i.e. it waited)`);
+  } catch (err) {
+    record(step, false, errCode(err));
+  } finally {
+    await a.end();
+    await b.end();
+  }
+}
+
+/** D: lock_timeout turns a held row lock into 55P03, not a hang. */
+async function stepLockTimeout(url: string): Promise<void> {
+  const step = 'D lock_timeout turns a held lock into 55P03';
+  const a = await connect(url);
+  const b = await connect(url);
+  try {
+    const userId = await newUser(a);
+    await a.query('BEGIN');
+    await a.query('SELECT id FROM auth.users WHERE id = $1 FOR UPDATE', [userId]);
+    await b.query('BEGIN');
+    await b.query("SET LOCAL lock_timeout = '500ms'");
+    let code = 'none';
+    try {
+      await within(5_000, b.query('SELECT id FROM auth.users WHERE id = $1 FOR NO KEY UPDATE', [userId]));
+    } catch (err) {
+      code = errCode(err);
+    }
+    await b.query('ROLLBACK');
+    await a.query('ROLLBACK');
+    record(step, code === '55P03', `waiting exchange got: ${code}`);
+  } catch (err) {
+    record(step, false, errCode(err));
+  } finally {
+    await a.end();
+    await b.end();
+  }
+}
+
+function setProbeEnv(url: string): void {
+  process.env.DATABASE_URL = url;
+  process.env.BETTER_AUTH_SECRET = 'probe-secret-at-least-32-characters-long-00';
+  process.env.BETTER_AUTH_URL = 'http://localhost:3100';
+  process.env.CORS_ORIGIN = 'http://localhost:3100';
+  process.env.AUTH_LAYER_ORIGIN = 'https://api.probe.example';
+  process.env.NODE_ENV = 'test';
+  process.env.AUTH_JWT_ISSUER = 'https://auth.probe.example';
+  process.env.AUTH_JWT_AUDIENCE = 'ansari-api-probe';
+  process.env.RESEND_API_KEY = 're_probe_key_at_least_20_chars';
+  process.env.FRONTEND_URL = 'http://localhost:8081';
+  resetEnvCache();
+}
+
+/**
+ * E: pool starvation. 10 concurrent exchanges against a pool of 2 connections.
+ * Each locks its user, writes a session and commits, then signs with the real
+ * `auth.api.signJWT` (which reads auth.jwks through the pool). With signing
+ * OUTSIDE the transaction all finish. With signing INSIDE, and no connect
+ * timeout, each transaction holds a connection while waiting for another: the
+ * deadline fires, which is the hang. With a connect timeout it fails loudly.
+ */
+async function stepPool(url: string, signInside: boolean, connectTimeout: number | undefined): Promise<void> {
+  const label = signInside
+    ? `E2 signing INSIDE the transaction, pool max 2${connectTimeout ? `, connect timeout ${connectTimeout} ms` : ', no connect timeout'}`
+    : 'E1 signing AFTER commit, pool max 2';
+  const pool = new Pool({ connectionString: url, max: 2, connectionTimeoutMillis: connectTimeout });
+  pool.on('error', () => undefined);
+  const db = drizzle({ client: pool, schema }) as unknown as Db;
+  setProbeEnv(url);
+  const auth = createAuth(db);
+  const seed = await connect(url);
+  const users = await Promise.all(Array.from({ length: 10 }, () => newUser(seed)));
+  await seed.end();
+  // Mint the signing key once, so every exchange only reads it.
+  await auth.api.signJWT({ body: { payload: { sub: users[0], sid: randomUUID() } } });
+
+  const exchange = async (userId: string) => {
+    const iat = Math.floor(Date.now() / 1000);
+    const exp = iat + 15 * 60;
+    let sid = '';
+    let signed = '';
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL lock_timeout = '2s'`);
+      await tx.execute(sql`SELECT id FROM auth.users WHERE id = ${userId} FOR NO KEY UPDATE`);
+      const inserted = await tx.execute<{ id: string }>(
+        sql`INSERT INTO auth.session (token, expires_at, updated_at, user_id, ip_address, user_agent)
+            VALUES (${token()}, now() + interval '30 days', now(), ${userId}, '', '') RETURNING id`
+      );
+      sid = inserted.rows[0]!.id;
+      if (signInside) {
+        signed = (await auth.api.signJWT({ body: { payload: { sub: userId, sid, iat, exp } } })).token;
+      }
+    });
+    if (!signInside) {
+      signed = (await auth.api.signJWT({ body: { payload: { sub: userId, sid, iat, exp } } })).token;
+    }
+    return signed;
+  };
+
+  const settled = await within(
+    DEADLINE_MS,
+    Promise.allSettled(users.map((u) => exchange(u)))
+  ).catch((err: unknown) => err);
+
+  if (settled instanceof Deadline) {
+    record(label, signInside, `deadline: the run HUNG (${DEADLINE_MS} ms)${signInside ? ', as expected for signing inside' : ''}`);
+  } else if (Array.isArray(settled)) {
+    const ok = settled.filter((s) => s.status === 'fulfilled').length;
+    const codes = settled
+      .filter((s): s is PromiseRejectedResult => s.status === 'rejected')
+      .map((s) => errCode(s.reason));
+    const detail = `${ok}/10 finished${codes.length ? `; failures: ${[...new Set(codes)].join(', ')}` : ''}`;
+    if (signInside) record(label, connectTimeout !== undefined && codes.length > 0, `${detail} (loud failure, no hang)`);
+    else record(label, ok === 10, detail);
+  } else {
+    record(label, false, errCode(settled));
+  }
+  // A hung run leaves clients checked out; do not wait for them.
+  void pool.end().catch(() => undefined);
+}
+
+async function main(): Promise<void> {
+  const url = process.argv[2];
+  if (!url) {
+    console.error('Usage: exchange-lock-probe.ts <postgres URL of a throwaway local container>');
+    process.exit(2);
+  }
+  const host = new URL(url).hostname;
+  if (host !== '127.0.0.1' && host !== 'localhost') {
+    console.error(`Refusing to run against ${host}: this probe drops the auth schema. Local containers only.`);
+    process.exit(2);
+  }
+  const server = await connect(url);
+  const { rows } = await server.query<{ server_version: string }>('SHOW server_version');
+  await server.end();
+  console.log(`Probe 4 against Postgres ${rows[0]!.server_version} at ${host} (${new Date().toISOString()})`);
+
+  await resetSchema(url);
+  await stepSameTransaction(url);
+  await stepBanWaits(url);
+  await stepOtherConnectionInsert(url);
+  await stepForUpdateBlocks(url);
+  await stepLockTimeout(url);
+  await stepPool(url, false, undefined);
+  await stepPool(url, true, undefined);
+  await stepPool(url, true, 2_000);
+
+  const failed = results.filter((r) => !r.ok);
+  console.log(`\n${results.length - failed.length}/${results.length} steps as expected.`);
+  process.exit(failed.length === 0 ? 0 : 1);
+}
+
+void main();

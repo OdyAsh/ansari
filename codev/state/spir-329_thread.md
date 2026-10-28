@@ -56,3 +56,14 @@
 - Decision 3: formulas in P/D/U/N (legacy peak msg/min, daily msgs, DAU, instances), PROVISIONAL values, wide create-script bounds; the data was requested from the owner.
 - No committed real-Postgres test infra exists (spec 300's Docker boot test was a manual run), so probe 4 and the outage run are manual against postgres:18, with output in the review.
 - auth-journal-parity asserts a "single 0000" journal and schema tests assert six tables; both change in phase 1. AUTH_DEPLOYED_THROUGH stays main's.
+
+## 2026-10-28: implement phase 1 (plugin, schema, 0001, blocked surface, probes)
+
+- Main approved via security: migration tag 0001_api_key_phone (additive only); AUTH_DEPLOYED_THROUGH bumps to 0001 at the rebase, with a second
+  auth-journal-applied line in RELEASE.md; merge precondition: owner applies 0001 to STAGING before merge, and to PRODUCTION before promote
+  (duplicate check, apply, verify). Builders cannot afx send architect:main (router refuses); relay via security.
+- Probe 4 on real Postgres 18.6: all 8 steps as planned, incl. the FOR UPDATE hazard reproduced (C'), and pool starvation: sign-after-commit 10/10 on a pool of 2,
+  sign-inside hangs (no connect timeout) or fails loudly (timeout). Output is in codev/reviews/329-*.md.
+- Probe 4a surprise (benign): sign-up with phone_number is REFUSED 400 FIELD_NOT_ALLOWED, not silently ignored; nothing stored.
+- The probe script lives in packages/auth/scripts/probes (apps/auth has no direct pg/drizzle dep), a deviation from the plan path.
+- The prefix rule was proven load-bearing by removing it (2 tests go red).
