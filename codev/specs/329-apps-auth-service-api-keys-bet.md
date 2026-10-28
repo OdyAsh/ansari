@@ -452,7 +452,7 @@ A small table of hashed keys with permissions and limits, verified by apps/auth'
 11. Every key refusal → the identical 401 body, no rows.
 12. Owner binding: a `whatsapp: mint` key under another service user → 401. Service user missing → 500 + alert.
 13. Eligibility matrix: `whatsapp` row on an email, service or admin user; a promoted WhatsApp user; an altered address or `registered_via` → 500 + alert, no token.
-14. Delegation inputs: admin and email-user ids and emails as `bsuid` → 400; a BSUID-shaped `google` `account_id` → a new WhatsApp user.
+14. Delegation inputs: admin and email-user ids and emails, and a `google` user's `account_id`, passed as `bsuid` → each is an unknown BSUID: a new WhatsApp user is created, and the seeded user is never reached.
 15. Ban: 403, sessions deleted, an earlier JWT dead at `/api/account/me`; an expired ban is let through.
 16. Per-user budget: 429 with an integer `X-Retry-After`; another user unaffected; the `rate_limit` key holds the user id; the counter survives a 403 and a 500; it runs on the pool, outside the transaction.
 16a. Lock timeout: the user row held from another connection → 500 within `lock_timeout`.
