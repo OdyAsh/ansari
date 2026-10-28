@@ -24,3 +24,8 @@
   schema mirrors the plugin model with generator column names.
 - Codex points folded in: key referenceId bound to the WhatsApp service user (resolved by a `service` account row, never by email);
   one session per user under a per-user lock, near-expiry sessions replaced; wa-<random uuid>@domain address; 403 for banned.
+
+## 2026-10-28: owner decision 1
+
+- Domain: `@noreply.askansari.ai` (fixed reserved subdomain). Addresses use a kind prefix: `whatsapp-<user id>@…` (the user's own UUID, chosen by the exchange
+  before insert, so the address is unique by construction) and `service-<service name>@…`. Considered and rejected: a hostname per user, and the bare @askansari.ai.

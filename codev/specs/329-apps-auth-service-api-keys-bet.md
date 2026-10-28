@@ -45,7 +45,7 @@ Affected: the WhatsApp service and its users (no path into apps/api today), the 
 ### 1. Service identity
 
 - `packages/auth` carries `@better-auth/api-key` pinned to the core version (1.7.7). Its `apikey` table is written by hand in `schema.ts`. It mirrors the plugin's model exactly, with the column names better-auth's generator would produce, in the existing `auth` schema style (uuid ids, `timestamptz`, `reference_id` a uuid referencing `auth.users` with cascade delete). The schema comment records the departures, as it does for the other tables. It ships as migration `0001`, generated, reviewed as SQL and applied by hand at deploy. Better Auth never changes the database shape.
-- **A service is one auth user**, created only by an operator script. It has an address under the non-interactive domain (Part 3), no credential, role `user`, and exactly one account row `{ providerId: 'service', accountId: <service name> }`. That row is how the service user is resolved (never by email), as system identities are resolved by `system_key`. One user per service: `whatsapp` now; later `mcp-faithful-answers`, and the leaderboard if it migrates. A service user cannot sign in: there is no `service` provider in Better Auth, and it has no credential.
+- **A service is one auth user**, created only by an operator script. Its address is `service-<service name>@noreply.askansari.ai` (Part 3; e.g. `service-whatsapp@noreply.askansari.ai`), and it has no credential, role `user`, and exactly one account row `{ providerId: 'service', accountId: <service name> }`. That row is how the service user is resolved (never by email), as system identities are resolved by `system_key`. One user per service: `whatsapp` now; later `mcp-faithful-answers`, and the leaderboard if it migrates. A service user cannot sign in: there is no `service` provider in Better Auth, and it has no credential.
 - **Permissions are fixed per service, in code.** The script has no free-form permission input: the `whatsapp` service always gets `{ whatsapp: ['mint'] }`, and `mcp-faithful-answers` will get `{ mcp: ['complete'] }` (#314). A key's permission and its owner always agree.
 - **Keys are issued, listed, rotated and revoked only by operator scripts**, in `grant-admin.ts`'s posture:
   - refuse to run without a database URL;
@@ -81,7 +81,7 @@ Every `valid: false` from the plugin, including its own 429s, maps to the one 40
 1. Verify the key with permission `whatsapp: mint`. A refusal → database check → 401 (or 500). The key's `referenceId` must be the WhatsApp service user, else 401.
 2. Validate the body and the BSUID pattern → 400. The key comes first, so an unauthenticated caller learns nothing about the body rules. A phone number is never accepted, stored or logged.
 3. Look up `auth.account` where `provider_id = 'whatsapp'` and `account_id = <bsuid>`. The provider is fixed in code; the lookup never goes through email.
-4. No row: create the user and the account row `{ providerId: 'whatsapp', accountId: <bsuid>, userId }` in **one transaction**. The user has no credential, `registered_via = 'whatsapp'`, the display name `WhatsApp user`, and the address `wa-<random UUID>@<non-interactive domain>`. The UUID is generated server-side and is independent of the BSUID, so the address carries neither the BSUID nor a phone number. A new `unique(provider_id, account_id)` makes a BSUID map to exactly one user under concurrency: the losing request rolls back and uses the winner's user. An address collision (a duplicate random UUID) is a 500, never a retry onto another user.
+4. No row: create the user and the account row `{ providerId: 'whatsapp', accountId: <bsuid>, userId }` in **one transaction**. The user has no credential, `registered_via = 'whatsapp'`, the display name `WhatsApp user`, and the address `whatsapp-<user id>@noreply.askansari.ai`. The exchange generates the user's UUID itself before the insert, and writes the id and the address together in the transaction. The address is therefore unique by construction (ids are the primary key), and carries neither the BSUID nor a phone number. A new `unique(provider_id, account_id)` makes a BSUID map to exactly one user under concurrency: the losing request rolls back and uses the winner's user.
 5. If the user is banned (the admin plugin's `banned`, honouring `banExpires`), delete all their sessions and answer 403.
 6. **Exactly one session per WhatsApp user.** Session work for one user is serialized (a lock on that user's row, held for the step). A live session that outlives the JWT about to be minted (it expires more than one JWT lifetime from now) is reused. Otherwise the user's sessions are deleted and one new session is created. The session carries no IP address and no user agent. Concurrent requests for one user therefore end with one session, and a token is never signed from a session that dies before the token does.
 7. Sign the JWT from that session (the jwt plugin's issuer, audience, lifetime and `{sub, sid}` payload) and return it.
@@ -90,7 +90,16 @@ The WhatsApp service caches the token per BSUID for under 15 minutes and calls a
 
 ### 3. A non-interactive address domain
 
-A second reserved domain (name: Open Question 1; working name `@no-login.ansari.chat`) for service users and WhatsApp users:
+A second reserved domain, **`@noreply.askansari.ai`** (owner decision 1), for service users and WhatsApp users. The kind of account is a prefix of the local part, followed by its id or name:
+
+| Account | Address | How many |
+|---|---|---|
+| WhatsApp user | `whatsapp-<user id>@noreply.askansari.ai` | one per person who messages Ansari on WhatsApp |
+| Service user | `service-<service name>@noreply.askansari.ai`, e.g. `service-whatsapp@…`, later `service-mcp-faithful-answers@…` | one per service that holds an API key |
+
+Prefixes keep each kind together in listings and logs, and let a `LIKE 'whatsapp-%'` count use the email index. The reserved check looks only at the domain, and nothing ever finds a user by email, so the prefix carries no security weight. Ordinary `@askansari.ai` addresses (staff, admins) are not reserved and keep working.
+
+The reserved domain is:
 
 - refused by sign-up with the same 409 as a taken address (no oracle);
 - skipped by the reset-request sender with the same silent success as an unknown address (no mail attempt);
@@ -110,7 +119,7 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
 - [ ] The create script prints the raw key exactly once. List, rotate and revoke print ids, names, prefixes, permissions, limits and dates, never a key or a hash.
 - [ ] Every script refuses to run without a database URL, shows the account and writes only with a matching `--confirm <id>` (a mismatch writes nothing), prints the database host before writing, and logs the key id it acted on.
 - [ ] The create script refuses `remaining` without `refillAmount` and `refillInterval`, and refuses a missing rate limit.
-- [ ] The service-user script creates the user and its `service` account row in one transaction, and refuses an existing service name.
+- [ ] The service-user script creates `service-<service name>@noreply.askansari.ai` and its `service` account row in one transaction, and refuses an existing service name.
 - [ ] Rotate leaves two live keys, both verifying. Revoke makes the revoked key fail at the exchange with the 401 body on the next request.
 - [ ] Exhausting a refilled budget refuses the key and keeps the row; after the refill interval the same key verifies again (pins the probe result).
 
@@ -123,6 +132,7 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
 
 **Exchange: identity**
 - [ ] A new BSUID creates exactly one user, one `whatsapp` account row and one session. It returns a JWT that verifies against apps/auth's JWKS with the same `alg`, `iss`, `aud` and lifetime as a `/api/auth/token` JWT, payload `{sub, sid}` naming that user and session.
+- [ ] The created user's address is exactly `whatsapp-<sub>@noreply.askansari.ai`, where `<sub>` is the token's subject.
 - [ ] The same BSUID twice returns the same `sub` and the same `sid`; the user has one session.
 - [ ] A session expiring within one JWT lifetime is replaced: the old one is deleted, and the token's `sid` names the new one.
 - [ ] Concurrent first requests for one BSUID produce one user and one account row, and all return a token for that user. Concurrent requests for an existing user leave exactly one session. The tests exercise the conflict and lock paths themselves (pglite serializes connections, so sequential calls would prove nothing).
@@ -137,6 +147,7 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
 
 **Reserved domain**
 - [ ] Sign-up with a non-interactive-domain address (any case, surrounding spaces) returns the same 409 body as a taken address.
+- [ ] Near misses are not reserved: `someone@askansari.ai`, `x@noreply.askansari.ai.example.com` and `x@notnoreply.askansari.ai` sign up normally.
 - [ ] A reset request for an existing non-interactive-domain user returns the same response as an unknown address, and the mailer is never called.
 - [ ] The `user.create.before` hook refuses both reserved domains on every Better Auth path.
 - [ ] Sign-in with a non-interactive-domain user's address fails exactly as for an unknown address.
@@ -153,7 +164,7 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
 
 ## Constraints
 
-- **Risk tier High** (auth model, new table, new credential type): porch's consultation on spec, plan and PR, plus the security architect's 3-way review at each gate. The owner answers decisions 1–4 at the spec-approval gate.
+- **Risk tier High** (auth model, new table, new credential type): porch's consultation on spec, plan and PR, plus the security architect's 3-way review at each gate. The owner answers decisions 2–4 at the spec-approval gate (decision 1 is answered).
 - **Pin, do not bump.** The plugin's newest release requires core 1.7.14; bumping core is a separate, joint change.
 - **Schema discipline.** `schema.ts` is hand-written; the table is added there in its style. `drizzle-kit generate` → reviewed SQL → applied by a human with `psql -v ON_ERROR_STOP=1 --single-transaction` against the auth database. Never `db:push`. Main numbers migrations: `architect:main` is messaged before the journal entry is committed. Migration before code at deploy.
 - **Two databases.** Everything here is in the auth database and apps/auth. apps/api changes only in tests. No query crosses the two.
@@ -204,9 +215,9 @@ A small table of hashed keys with permissions and limits, verified by apps/auth'
 
 ## Open Questions
 
-**Critical: owner decisions, answered at the spec-approval gate (recommendation given, not settled)**
+**Critical: owner decisions, answered at the spec-approval gate (decision 1 answered; 2–4 have a recommendation, not settled)**
 
-1. **The non-interactive domain name.** Recommendation: `@no-login.ansari.chat`. It says what the address is, sits under a domain the project controls, and cannot be confused with `@system.ansari.chat`.
+1. ~~The non-interactive domain name.~~ **Decided by the owner (2026-10-28):** `@noreply.askansari.ai`, a fixed reserved subdomain with the account kind as a local-part prefix (`whatsapp-<user id>`, `service-<service name>`). This follows the common convention (GitHub's `users.noreply.github.com`, Apple's `privaterelay.appleid.com`). A hostname per user (e.g. `whatsapp-<id>.askansari.ai`) was considered and rejected: the reserved check would have to pattern-match hostnames instead of testing one fixed suffix, and the id would sit in a DNS label. The bare `@askansari.ai` was rejected because it would refuse real staff addresses.
 2. **Store the BSUID raw in `account.account_id`, or HMAC it with an apps/auth secret.** Recommendation: raw. The BSUID is already Meta's business-scoped pseudonym and is needed for lookup, as any OAuth provider id is. HMAC defends against correlation after a database leak, but costs a new secret, a new env var and a rotation story that re-keys every row.
 3. **The WhatsApp key's limits**, sized from the legacy WhatsApp service's traffic. The probe shows a refilled daily budget is safe: an exhausted key is refused and kept, and verifies again after the refill. So the decision is two numbers: a per-window ceiling (`rateLimitMax` per `rateLimitTimeWindow`, e.g. per minute) and a daily budget (`refillAmount` per 24 h). Recommendation: both, at about twice the legacy peak. The create script requires both explicitly (no defaults), and the values are recorded in the runbook. One exchange per BSUID per 15 minutes means the budget scales with active conversations, not messages. If the owner prefers a single cap, the per-window ceiling alone is safe; a budget without refill is not offered, because it destroys the key when exhausted.
 4. **The leaderboard: migrate from its static secret now or later.** Recommendation: later. Nothing forces it, and this spec ships one consumer.
