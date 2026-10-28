@@ -216,6 +216,11 @@ Round 2: Codex APPROVE.
 - **Noted, no change** (per security): `AUTH_DEPLOYED_THROUGH` stays null in this PR (main sets it at the production cutover); the boot check fails open on non-`42P01` errors by design; a leaked key can create up to its daily budget of new noreply users (the spec's threat model, visible as table growth).
 - Verified: apps/auth 459/459; packages/auth 252 + 1 skipped; apps/api doc and contract tests 118; typecheck and lint clean; the demo harness has the same exit tally and both checks pass. CI on 485e55f (pass 2) passed all four jobs.
 
+### Main architect, items A and B (the cutover applies the whole auth journal), 2026-10-28
+- **A (blocking)**: `deploy-guide.md` step 3 and `better-auth-cutover.md` step 5 applied only `0000` and checked a hardcoded 6 tables, which `0001` makes 7 → **Addressed** (0c2da21). Both now apply every journal file in `_journal.json` order, one `psql -X -v ON_ERROR_STOP=1 --single-transaction` each, before the copy. The check is `auth-journal.mjs check`, derived per migration from the objects its SQL creates (it refuses a statement kind it cannot check), so a later migration needs no runbook edit. Tests: `apps/auth/tests/cutover/auth-journal.test.ts` (the check on pglite through the whole journal, and through `0000` only, where it names `0001`), and a doc test pinning both pages' commands, their order before the copy, and no hardcoded count. It is red against the old guide (4 failed).
+- **B (blocking)**: `copy.sh --dry-run` on a schema-less database applied only the static `0000` → **Addressed** (05554db). `02-import-auth.sql` includes `:dry_run_baseline`, which is `auth-journal.mjs sql` (every file in order, then an assertion that each migration is present) read from a file descriptor that `copy.sh` holds open, so no file is written. The psql test harness gained `\i`. Tests: the baseline order, and a baseline of `0000` plus the full-journal assertion that fails naming `0001` (red against the old `\ir 0000`). Real-Postgres dry run below.
+- The runbooks' wording, verbatim from main, goes in the service-keys runbook's staging half (d177e80): the apply discipline, and the duplicate pre-check only where data exists.
+
 ## Lessons Learned
 
 ### What Went Well
@@ -415,6 +420,61 @@ This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under 
 ## Appendix: verification evidence
 
 Probe outputs, per-phase notes and the pre-existing Sentry reproduction, recorded as each phase ran.
+
+### Main's item B: `copy.sh --dry-run` against an empty auth database (real Postgres 18), 2026-10-28
+
+Two throwaway `postgres:18` containers on loopback: the app database migrated through apps/api's `0010` with two seeded legacy users, and an empty auth database. `copy.sh --dry-run --allow-local` was run under a pseudo-terminal (it refuses a redirected stdout). The notice comes from inside the rolled-back transaction. `0001_api_key_phone` is reported applied only when every object its SQL creates exists, and that includes `auth.apikey` and `auth.users.phone_number` (the generated check names `to_regclass('"auth"."apikey"')` and `column_name = 'phone_number'`). After the run, the auth database has no `auth` schema and no tables.
+
+```
+== auth database before: schemas named auth = 0
+== copy.sh --dry-run --allow-local
+copy.sh: LOCAL TEST RUN (--allow-local): loopback databases only; the Tailscale forwarder host check is skipped
+copy.sh: WARNING: APP_DATABASE_URL carries no sslmode=require (runbook step 1 records whether TLS is offered through the forwarder)
+copy.sh: WARNING: AUTH_DATABASE_URL carries no sslmode=require (runbook step 1 records whether TLS is offered through the forwarder)
+copy.sh: DRY RUN: the copy runs in one transaction and is rolled back; nothing is committed
+copy.sh: DRY RUN: the auth database has no schema; the whole auth journal (_journal.json order) is applied inside the transaction and rolled back with it
+copy.sh: dry run: copying 2 non-system user(s) (app → auth)
+psql:/dev/fd/9:149: NOTICE:  auth journal check: applied inside this transaction: 0000_auth_schema, 0001_api_key_phone
+copy.sh: dry run: rolled back; the auth database is as it was
+copy.sh: auditing
+-- app
+rows|2
+id_checksum|e455da112cf76f48cf8a3955e023acfc
+email_checksum|d747e16f0846f0586fb4ea0bf2ac688c
+hash_checksum|12acf6c898b966091e96498568cb87e6
+credentials|2
+system_domain_rows|0
+-- auth
+rows|2
+id_checksum|e455da112cf76f48cf8a3955e023acfc
+email_checksum|d747e16f0846f0586fb4ea0bf2ac688c
+hash_checksum|12acf6c898b966091e96498568cb87e6
+credentials|2
+system_domain_rows|0
+copy.sh: dry run audit OK (nothing committed)
+copy.sh exit=0
+== auth database after: schemas named auth = 0, tables outside the catalogs = 0
+```
+
+### Main's item A: the runbook's journal apply and check (real Postgres 18), 2026-10-28
+
+The two commands from `better-auth-cutover.md` step 5 and `deploy-guide.md` step 3, against a fresh empty auth database, then a negative (the objects of `0001` dropped):
+
+```
+$ (empty auth database) tables outside the catalogs: 0
+$ for f in $(node apps/auth/scripts/cutover/auth-journal.mjs files); do psql ... --single-transaction -f "$f" || break; done
+  applying packages/auth/drizzle/0000_auth_schema.sql
+  applying packages/auth/drizzle/0001_api_key_phone.sql
+$ node apps/auth/scripts/cutover/auth-journal.mjs check | psql "$AUTH_DATABASE_URL" -X -q -At -v ON_ERROR_STOP=1
+0000_auth_schema|t
+0001_api_key_phone|t
+exit=0
+$ (negative) drop auth.apikey and auth.users.phone_number, then the same check
+0000_auth_schema|t
+0001_api_key_phone|f
+ERROR:  auth journal check: not applied: 0001_api_key_phone
+exit=3
+```
 
 ### Secret scan (gitleaks), review phase, 2026-10-28
 
