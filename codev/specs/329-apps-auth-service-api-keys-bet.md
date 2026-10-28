@@ -95,7 +95,7 @@ The script refuses `remaining` without a refill: probed above, that configuratio
 - print nothing secret, except the new key exactly once at creation;
 - **revoke sets `enabled = false` and keeps the row** (refused and kept, as probed), so the trail survives. Rotate creates a second live key; the old one is revoked once the consumer has switched.
 
-Every create, rotate and revoke also sends a durable Sentry event (service, key id, name, action, no key material), so the record does not live only in a terminal.
+Every create, rotate and revoke also sends a durable Sentry event (service, key id, name, action, no key material), so the record does not live only in a terminal. If that event cannot be sent (the flush fails or times out), the write stands, the script prints a loud banner telling the operator to record the key id and action in the runbook's key log, and exits non-zero.
 
 **Where the raw key lives.** In exactly two places, briefly in one and durably in the other:
 - the create script's single output, in the operator's shell inside the auth service;
@@ -241,7 +241,7 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
 - [ ] The create script refuses `remaining` without a refill, a missing rate limit, values outside the `limits.ts` bounds, and any expiry option.
 - [ ] The service-user script creates `service-<name>@noreply.askansari.ai` and its `service` account row in one transaction, and refuses an existing service name.
 - [ ] Rotate leaves two live keys, both verifying. Revoke sets `enabled = false` and keeps the row; the revoked key then fails at the exchange with the 401 body.
-- [ ] Create, rotate and revoke each send one Sentry event with service, key id, name and action, and no key material.
+- [ ] Create, rotate and revoke each send one Sentry event with service, key id, name and action, and no key material. A failed send keeps the write, prints the key-log banner and exits non-zero.
 - [ ] Exhausting a refilled budget refuses the key and keeps the row; after the refill interval, the same key verifies again.
 - [ ] `grant-admin.ts` refuses a `@noreply.askansari.ai` address, as it refuses the system domain.
 
@@ -327,7 +327,7 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
 
 **Unchanged**
 - [ ] `ROUTER_RULES` are all `false`; no per-IP rule applies to the exchange.
-- [ ] Every existing apps/auth, packages/auth and apps/api test passes unedited, except tests that enumerate the blocked paths, the schema or the reserved check, which gain the new entries.
+- [ ] Every existing apps/auth, packages/auth and apps/api test passes unedited, except tests that enumerate the blocked paths, the schema or the reserved check (which gain the new entries), and tests that assert better-auth's log output (which change with the redacted logger, each listed in that commit's message).
 - [ ] No new environment variable. If one appears, it is added to `turbo.json` `globalEnv` by the four-way derivation and reviewed by main.
 
 ## Constraints
