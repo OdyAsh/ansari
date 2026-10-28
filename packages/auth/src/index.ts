@@ -15,6 +15,7 @@ import { z } from 'zod';
 
 import { createDb, type Db } from './db';
 import { getEnv, type AuthEnv } from './env';
+import { JWT_LIFETIME_SECONDS, SESSION_LIFETIME_SECONDS, SESSION_UPDATE_AGE_SECONDS } from './lifetimes';
 import { DEFAULT_RULE, LONGEST_WINDOW, ROUTER_RULES } from './limits';
 import { logBetterAuth } from './logger';
 import { deriveName } from './name';
@@ -47,6 +48,8 @@ export {
 } from './reserved';
 export * as users from './users';
 export * as serviceUsers from './service-users';
+export * as whatsapp from './whatsapp';
+export * from './lifetimes';
 export {
   resetEmailHtml,
   resetLink,
@@ -57,14 +60,12 @@ export {
 } from './reset-email';
 export { CLIENT_HEADER } from '@ansari/types/attribution';
 
-const DAY = 24 * 60 * 60;
-
 /** Same bounds as the legacy register schema, and better-auth's own defaults. */
 export const MIN_PASSWORD_LENGTH = 8;
 export const MAX_PASSWORD_LENGTH = 128;
 
 /** The JWT access-token lifetime: the revocation window (spec 300, item 11). */
-export const JWT_EXPIRATION = '15m';
+export const JWT_EXPIRATION = `${JWT_LIFETIME_SECONDS / 60}m`;
 
 /** The one response for a taken OR reserved address, so sign-up is no oracle. */
 export const EMAIL_TAKEN_MESSAGE = 'An account with this email already exists';
@@ -300,7 +301,7 @@ export function createAuth(db: Db = createDb(), extensions: AuthExtensions = {})
     emailVerification: { sendOnSignUp: false },
     // 30 days, slid forward at most once a day by any session use, including
     // the session → JWT exchange at /token. Better Auth's defaults are 7d / 1d.
-    session: { expiresIn: 30 * DAY, updateAge: 1 * DAY },
+    session: { expiresIn: SESSION_LIFETIME_SECONDS, updateAge: SESSION_UPDATE_AGE_SECONDS },
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
     // Every Error argument is reduced to {name, code} (logger.ts): a driver

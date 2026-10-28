@@ -22,7 +22,7 @@ import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Client, Pool } from 'pg';
 
-import { createAuth, type Db } from '../../src/index';
+import { createAuth, limits, whatsapp, type Db } from '../../src/index';
 import * as schema from '../../src/schema';
 import { connect, localUrlFromArgs, resetSchema, serverVersion, setProbeEnv } from './probe-db';
 
@@ -54,8 +54,9 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function errCode(err: unknown): string {
   if (err instanceof Deadline) return 'DEADLINE';
-  const e = err as { code?: unknown; name?: unknown; message?: unknown };
-  return String(e.code ?? e.name ?? 'unknown');
+  // Drizzle wraps a driver error in a query error; the SQLSTATE is on its cause.
+  const e = err as { code?: unknown; name?: unknown; cause?: { code?: unknown } };
+  return String(e.code ?? e.cause?.code ?? e.name ?? 'unknown');
 }
 
 async function newUser(client: Client): Promise<string> {
@@ -279,6 +280,135 @@ async function stepPool(url: string, signInside: boolean, connectTimeout: number
   void pool.end().catch(() => undefined);
 }
 
+/**
+ * F: the same properties through the real phase 5 functions
+ * (`resolveOrCreateWhatsappUser`, `issueWhatsappToken`), on a pool of 2 with
+ * a connect timeout, as apps/auth would run them. Concurrency here is real,
+ * which pglite cannot show.
+ */
+async function stepRealFunctions(url: string): Promise<void> {
+  const pool = new Pool({ connectionString: url, max: 2, connectionTimeoutMillis: 2_000 });
+  pool.on('error', () => undefined);
+  const db = drizzle({ client: pool, schema }) as unknown as Db;
+  setProbeEnv(url);
+  const auth = createAuth(db);
+  const bsuid = () => `US.${generateRandomString(20, '0-9')}`;
+  const other = await connect(url);
+  try {
+    // F1: ten concurrent first exchanges for ONE new BSUID: one user, one
+    // whatsapp row, one session; every caller gets the same sub and sid.
+    {
+      const step = 'F1 real functions: 10 concurrent exchanges for one new BSUID';
+      const id = bsuid();
+      try {
+        const outcomes = await within(
+          DEADLINE_MS,
+          Promise.all(
+            Array.from({ length: 10 }, async () => {
+              const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, id, null);
+              return { userId, outcome: await whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id, phone: null }) };
+            })
+          )
+        );
+        const users = new Set(outcomes.map((o) => o.userId));
+        const sids = new Set(outcomes.map((o) => (o.outcome.kind === 'issued' ? o.outcome.sessionId : o.outcome.kind)));
+        const [userId] = users;
+        const { rows } = await other.query<{ accounts: number; sessions: number }>(
+          `SELECT (SELECT count(*)::int FROM auth.account WHERE provider_id = 'whatsapp' AND account_id = $1) AS accounts,
+                  (SELECT count(*)::int FROM auth.session WHERE user_id = $2) AS sessions`,
+          [id, userId]
+        );
+        const { accounts, sessions } = rows[0]!;
+        record(
+          step,
+          users.size === 1 && sids.size === 1 && accounts === 1 && sessions === 1,
+          `distinct users: ${users.size}; distinct sids: ${sids.size}; whatsapp rows: ${accounts}; sessions: ${sessions}`
+        );
+      } catch (err) {
+        record(step, false, errCode(err));
+      }
+    }
+
+    // F2: a session insert holding KEY SHARE on the user (open, on another
+    // connection) does not block the real exchange.
+    {
+      const step = "F2 real functions: another connection's open session insert does not block the exchange";
+      const id = bsuid();
+      try {
+        const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, id, null);
+        await other.query('BEGIN');
+        await other.query(INSERT_SESSION, [token(), userId]);
+        const outcome = await within(DEADLINE_MS, whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id, phone: null }));
+        await other.query('ROLLBACK');
+        record(step, outcome.kind === 'issued', `exchange outcome while the insert was open: ${outcome.kind}`);
+      } catch (err) {
+        await other.query('ROLLBACK').catch(() => undefined);
+        record(step, false, errCode(err));
+      }
+    }
+
+    // F3: a ban holding the user row (open, on another connection) makes the
+    // real exchange fail with its own lock_timeout (55P03), not hang.
+    {
+      const step = 'F3 real functions: a held ban update fails the exchange with 55P03 within its lock_timeout';
+      const id = bsuid();
+      try {
+        const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, id, null);
+        await other.query('BEGIN');
+        await other.query('UPDATE auth.users SET banned = true WHERE id = $1', [userId]);
+        const started = Date.now();
+        const result = await within(
+          DEADLINE_MS,
+          whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id, phone: null }).then(
+            (o) => o.kind,
+            (err: unknown) => errCode(err)
+          )
+        );
+        const waited = Date.now() - started;
+        await other.query('COMMIT');
+        const after = await within(DEADLINE_MS, whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id, phone: null }));
+        record(
+          step,
+          result === '55P03' && waited < limits.EXCHANGE_LOCK_TIMEOUT + 1_500 && after.kind === 'banned',
+          `exchange got ${result} after ${waited} ms (lock_timeout ${limits.EXCHANGE_LOCK_TIMEOUT} ms); after the ban committed: ${after.kind}`
+        );
+      } catch (err) {
+        await other.query('ROLLBACK').catch(() => undefined);
+        record(step, false, errCode(err));
+      }
+    }
+
+    // F4: pool starvation through the real functions: 10 different new
+    // users at once on a pool of 2, each resolving, locking, writing a
+    // session, committing and signing (which reads jwks on the pool).
+    {
+      const step = 'F4 real functions: 10 concurrent new users on a pool of 2 (sign after commit)';
+      try {
+        const settled = await within(
+          DEADLINE_MS,
+          Promise.allSettled(
+            Array.from({ length: 10 }, async () => {
+              const id = bsuid();
+              const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, id, null);
+              return whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id, phone: null });
+            })
+          )
+        );
+        const issued = settled.filter((s) => s.status === 'fulfilled' && s.value.kind === 'issued').length;
+        const codes = settled
+          .filter((s): s is PromiseRejectedResult => s.status === 'rejected')
+          .map((s) => errCode(s.reason));
+        record(step, issued === 10, `${issued}/10 issued${codes.length ? `; failures: ${[...new Set(codes)].join(', ')}` : ''}`);
+      } catch (err) {
+        record(step, false, errCode(err));
+      }
+    }
+  } finally {
+    await other.end();
+    await pool.end();
+  }
+}
+
 async function main(): Promise<void> {
   const { url, host } = localUrlFromArgs('exchange-lock-probe.ts');
   console.log(`Probe 4 against Postgres ${await serverVersion(url)} at ${host} (${new Date().toISOString()})`);
@@ -292,6 +422,7 @@ async function main(): Promise<void> {
   await stepPool(url, false, undefined);
   await stepPool(url, true, undefined);
   await stepPool(url, true, 2_000);
+  await stepRealFunctions(url);
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} steps as expected.`);

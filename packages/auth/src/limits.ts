@@ -86,6 +86,14 @@ export const SIGN_IN_FAILED_ALERT: LimitRule = { window: MINUTE, max: 30 };
 /** List-walk alert when this many distinct emails hit a per-email limit in the window. */
 export const LIST_WALK_ALERT = { window: 10 * MINUTE, distinctEmails: 20 } as const;
 
+/**
+ * WhatsApp token exchange (spec 329), per user (keyed by the user id, never the
+ * BSUID), spent on the pool before the lock. Normal use is about one exchange
+ * per 15-minute token, plus one after a restart; a looping client for one user
+ * hits 429 at once.
+ */
+export const WHATSAPP_EXCHANGE_PER_USER: LimitRule = { window: 15 * MINUTE, max: 6 };
+
 /** The longest window above. better-auth's pruner keeps rows at least this long. */
 export const LONGEST_WINDOW = Math.max(
   ...[
@@ -100,6 +108,7 @@ export const LONGEST_WINDOW = Math.max(
     SIGN_UP_GLOBAL,
     SIGN_IN_FAILED_ALERT,
     LIST_WALK_ALERT,
+    WHATSAPP_EXCHANGE_PER_USER,
   ].map((rule) => rule.window)
 );
 
@@ -178,3 +187,14 @@ export const WHATSAPP_KEY_BOUNDS = {
   rateLimitTimeWindow: { min: SECOND_MS, max: DAY_MS },
   refillAmount: { min: 1, max: 10_000_000 },
 } as const;
+
+// The WhatsApp exchange's session and transaction (spec 329), in MILLISECONDS.
+
+/** A session the exchange signs from must outlive the token's `exp` by at least this much. */
+export const SESSION_MARGIN = 5 * 60 * SECOND_MS;
+
+/** The exchange's `lock_timeout`: a held user row fails one request, not the pool. */
+export const EXCHANGE_LOCK_TIMEOUT = 2 * SECOND_MS;
+
+/** The exchange's `statement_timeout`, for any slow statement in its transaction. */
+export const EXCHANGE_STATEMENT_TIMEOUT = 5 * SECOND_MS;

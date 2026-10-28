@@ -121,6 +121,35 @@ The plan's green command, run in sequence (`pnpm turbo run test --force`, then `
 - Residual: messages are not rewritten. The better-auth paths this service runs pass errors as arguments; the few that interpolate an error into the message string (OAuth discovery, token introspection) are not configured.
 - No existing test asserted better-auth log output, so none needed editing.
 
+### Phase 5: probe 4 rerun against the real functions (real Postgres), 2026-10-28
+
+Steps A to E unchanged; F1 to F4 drive `resolveOrCreateWhatsappUser` and
+`issueWhatsappToken` themselves, on a pool of 2 with a 2 s connect timeout, against a fresh
+`postgres:18` container. The first run showed F3 as `Error` after 2017 ms: the
+probe's own reader took the top-level code, and drizzle wraps the driver error, so
+the SQLSTATE is on `cause`. The reader was fixed (the route in phase 6 reads it the same
+way, as `redactError` does) and the run repeated:
+
+```
+Probe 4 against Postgres 18.6 (Debian 18.6-1.pgdg13+2) at 127.0.0.1 (2026-10-28T08:29:35.379Z)
+PASS  A same-transaction session insert under FOR NO KEY UPDATE: committed without waiting; 1 session
+PASS  B concurrent ban waits for the exchange, then deletes its session: ban waited: true; ban finished after exchange commit: true; sessions left: 0
+PASS  C session insert from another connection does not wait on FOR NO KEY UPDATE: insert completed while the lock was held
+PASS  C' contrast: FOR UPDATE blocks another connection's session insert (the hazard): other connection's insert: 57014 (57014 = cancelled by statement_timeout, i.e. it waited)
+PASS  D lock_timeout turns a held lock into 55P03: waiting exchange got: 55P03
+(node:45541) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+PASS  E1 signing AFTER commit, pool max 2: 10/10 finished
+PASS  E2 signing INSIDE the transaction, pool max 2, no connect timeout: deadline: the run HUNG (10000 ms), as expected for signing inside
+PASS  E2 signing INSIDE the transaction, pool max 2, connect timeout 2000 ms: 1/10 finished; failures: Error (loud failure, no hang)
+PASS  F1 real functions: 10 concurrent exchanges for one new BSUID: distinct users: 1; distinct sids: 1; whatsapp rows: 1; sessions: 1
+PASS  F2 real functions: another connection's open session insert does not block the exchange: exchange outcome while the insert was open: issued
+PASS  F3 real functions: a held ban update fails the exchange with 55P03 within its lock_timeout: exchange got 55P03 after 2013 ms (lock_timeout 2000 ms); after the ban committed: banned
+PASS  F4 real functions: 10 concurrent new users on a pool of 2 (sign after commit): 10/10 issued
+
+12/12 steps as expected.
+```
+
 ## Flaky Tests
 
 ### `apps/auth/tests/secrets.test.ts` and `apps/auth/tests/cutover/copy.test.ts` (fixed with a targeted deadline)
@@ -316,3 +345,12 @@ This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under 
   - Negative test: with the breadcrumb options removed, the `console.log` case leaks the key and goes red, and the stdout case still passes. So Codex's leak was real, and either guard alone stops it.
   - Lesson: a Sentry test with `defaultIntegrations: false` cannot show what production Sentry sends.
 - Green per package: `@ansari/auth` 220 + 1 skipped (the `DEPLOYED_THROUGH` parity check, pending the rebase), `ansari-auth` 338 (after iteration 2), `ansari-api` 1113 + 3 skipped. Root typecheck and lint pass.
+
+## Phase 5: WhatsApp identity and session core (notes)
+
+- `packages/auth/src/whatsapp.ts`: `resolveOrCreateWhatsappUser` (fixed-provider lookup; user and `whatsapp` row in one transaction; a unique violation on `account_provider_id_account_id_unique`, read from the error or its cause, rolls back and returns the winner) and `issueWhatsappToken` (`decideUnderLock` in one transaction, then `signJWT` after the commit). Outcomes are typed: `issued`, `banned`, `ineligible` (with a reason: `accounts`, `address`, `registered_via`, `admin`), `user-gone`. Timeouts, outages and signing failures throw (the route answers 500).
+- **Stricter than the spec, recorded:** eligibility requires the address to be exactly `whatsapp-<this user's id>@noreply.askansari.ai`, not just any address under the domain. Nothing legitimate writes another noreply address for a WhatsApp user.
+- Lifetimes moved to `src/lifetimes.ts` (`JWT_LIFETIME_SECONDS`, `SESSION_LIFETIME_SECONDS`, `SESSION_UPDATE_AGE_SECONDS`), so `createAuth` and the exchange read one source; `JWT_EXPIRATION` is still `'15m'`, derived. `limits.ts` gains `WHATSAPP_EXCHANGE_PER_USER` (6 per 15 min, in `LONGEST_WINDOW`) and, in ms, `SESSION_MARGIN`, `EXCHANGE_LOCK_TIMEOUT`, `EXCHANGE_STATEMENT_TIMEOUT`.
+- `tests/whatsapp.test.ts`, 26 tests on pglite. The session-token pin checks 20 written tokens, not one: a single token from the unrestricted generator lacks `-`/`_` about a third of the time.
+- **Mutation-tested**, each red, then restored (26/26 green): dropping the BSUID re-check, dropping the ban's session delete, the unrestricted generator, no margin, no admin check, clearing the phone when absent, and signing inside the transaction. The last one hangs pglite outright (one connection: signJWT waits on the open transaction, the pool-starvation hazard in miniature). It was run again against the source-level block alone, which goes red both for a wrapper that signs inside `db.transaction` and for a `signJWT` inside `decideUnderLock`.
+- Verified: @ansari/auth 246 + 1 skipped, ansari-auth 338, root typecheck and lint pass.

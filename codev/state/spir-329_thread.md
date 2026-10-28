@@ -97,3 +97,12 @@
 - For lessons-learned at the review phase (security architect): with Sentry's default integrations, anything printed through console
   becomes a breadcrumb and travels with the next event. A one-time secret print needs breadcrumbs off and direct stdout, and a log-capture
   test is not enough on its own: a production-shaped Sentry capture test is.
+
+## 2026-10-28: phase 5 (WhatsApp identity and session core)
+
+- packages/auth/src/whatsapp.ts: resolveOrCreateWhatsappUser + issueWhatsappToken (decideUnderLock in the tx, signJWT after commit), typed outcomes.
+  Address eligibility is EXACT (whatsapp-<own id>@noreply…), stricter than the spec's "under the domain"; recorded in the review.
+- Lifetimes moved to src/lifetimes.ts so createAuth and the exchange share them. 26 pglite tests, mutation-tested (7 mutants, all red).
+- Surprise: a signJWT-inside-the-tx mutant HANGS pglite (single connection), the pool-starvation hazard in miniature. Caught by the source-level test.
+- Probe 4 rerun on real Postgres with new F1-F4 steps through the real functions: 12/12. First run misread F3, because drizzle wraps driver errors
+  (the SQLSTATE is on .cause). Phase 6's 500 mapping and logging must read the cause, as redactError does.
