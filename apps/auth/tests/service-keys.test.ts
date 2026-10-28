@@ -70,13 +70,15 @@ type RunOptions = { url?: string | undefined; recorder?: Recorder; flushTimeoutM
 
 async function run(argv: string[], opts: RunOptions = {}) {
   const connect = vi.fn(() => ({ db: service.db, auth: service.auth }));
+  const print = vi.fn<(line: string) => void>();
   const result = await serviceKeys(argv, {
     databaseUrl: 'url' in opts ? opts.url : DB_URL,
     connect,
     recorder: opts.recorder ?? memoryRecorder(),
+    print,
     flushTimeoutMs: opts.flushTimeoutMs,
   });
-  return { ...result, text: result.lines.join('\n'), connect };
+  return { ...result, text: result.lines.join('\n'), connect, print };
 }
 
 async function serviceUserId(name = 'whatsapp'): Promise<string> {
@@ -284,9 +286,14 @@ describe('every subcommand', () => {
         if (url === DB_URL_DISTINCT && name === 'create-service') {
           await service.client.query(`delete from auth.users where registered_via = 'service'`);
         }
-        const { text, exitCode } = await run(argv, { url });
+        const { text, exitCode, print, connect } = await run(argv, { url });
         expect(exitCode, text).toBe(0);
         expect(text.split('\n')[0]).toBe('Auth database: db.example:6543');
+        // Printed at once, before the script connects (and so before any write),
+        // and every line printed is the line returned, in order.
+        expect(print.mock.calls[0]).toEqual(['Auth database: db.example:6543']);
+        expect(print.mock.invocationCallOrder[0]!).toBeLessThan(connect.mock.invocationCallOrder[0]!);
+        expect(print.mock.calls.map(([line]) => line)).toEqual(text.split('\n'));
         expect(text).toContain('db.example:6543');
         for (const leak of ['user:secret', 'secret', 'sslmode', '/auth?', 'opsname-zq', 'pw-zq', 'authdb-zq', 'verify-full', 'application_name', 'postgres://']) {
           expect(text, leak).not.toContain(leak);

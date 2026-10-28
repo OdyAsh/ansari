@@ -39,8 +39,12 @@ async function main(): Promise<void> {
 
   async function step(argv: string[]): Promise<string[]> {
     console.log(`\n$ tsx scripts/service-keys.ts ${argv.join(' ')}`);
-    const { lines, exitCode } = await serviceKeys(argv, { databaseUrl, connect: () => ({ db, auth }), recorder });
-    for (const line of lines) console.log(line);
+    const { lines, exitCode } = await serviceKeys(argv, {
+      databaseUrl,
+      connect: () => ({ db, auth }),
+      recorder,
+      print: (line) => console.log(line),
+    });
     console.log(`(exit ${exitCode})`);
     transcript.push(...lines);
     return lines;

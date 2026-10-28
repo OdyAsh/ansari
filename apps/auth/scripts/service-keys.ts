@@ -493,39 +493,56 @@ export type ScriptDeps = {
   databaseUrl: string | undefined;
   connect: () => ScriptContext;
   recorder: Recorder;
+  /** Prints one line at once (console.log in the script). */
+  print: (line: string) => void;
   flushTimeoutMs?: number;
 };
 
 /**
  * The whole script: database URL check, parse, `hostname:port`, run, and the
- * durable record. Returns every line to print and the exit code.
+ * durable record. Each line is printed as it is produced, so the database
+ * host is on the operator's screen before anything connects or writes.
+ * Returns every printed line and the exit code.
  */
 export async function serviceKeys(argv: readonly string[], deps: ScriptDeps): Promise<{ lines: string[]; exitCode: number }> {
+  const lines: string[] = [];
+  const emit = (...out: string[]) => {
+    for (const line of out) {
+      lines.push(line);
+      deps.print(line);
+    }
+  };
   if (!deps.databaseUrl) {
-    return { lines: ['DATABASE_URL is not set (the AUTH database). Refusing to run.'], exitCode: 1 };
+    emit('DATABASE_URL is not set (the AUTH database). Refusing to run.');
+    return { lines, exitCode: 1 };
   }
   const host = urlHostPort(deps.databaseUrl);
-  if (host === null) return { lines: ['DATABASE_URL does not parse as a URL. Refusing to run.'], exitCode: 1 };
-  const lines = [`Auth database: ${host}`];
+  if (host === null) {
+    emit('DATABASE_URL does not parse as a URL. Refusing to run.');
+    return { lines, exitCode: 1 };
+  }
+  emit(`Auth database: ${host}`);
   let result: ScriptResult;
   try {
     const cmd = parseArgs(argv);
     result = await runServiceKeys(deps.connect(), cmd);
   } catch (err) {
-    return { lines: [...lines, `service-keys refused: ${scriptError(err)}`], exitCode: 1 };
+    emit(`service-keys refused: ${scriptError(err)}`);
+    return { lines, exitCode: 1 };
   }
-  lines.push(...result.lines);
+  emit(...result.lines);
   if (result.events.length === 0) return { lines, exitCode: result.exitCode };
   for (const event of result.events) deps.recorder.capture(event);
   if (await deps.recorder.flush(deps.flushTimeoutMs ?? SENTRY_FLUSH_TIMEOUT_MS)) {
     return { lines, exitCode: result.exitCode };
   }
-  return { lines: [...lines, ...unrecordedBanner(result.events)], exitCode: EXIT_UNRECORDED };
+  emit(...unrecordedBanner(result.events));
+  return { lines, exitCode: EXIT_UNRECORDED };
 }
 
 async function main(): Promise<void> {
   initSentry(process.env.SENTRY_DSN, process.env.NODE_ENV ?? 'development');
-  const { lines, exitCode } = await serviceKeys(process.argv.slice(2), {
+  const { exitCode } = await serviceKeys(process.argv.slice(2), {
     databaseUrl: process.env.DATABASE_URL,
     connect: () => {
       try {
@@ -538,8 +555,8 @@ async function main(): Promise<void> {
       return { db, auth: createAuth(db) };
     },
     recorder: sentryRecorder,
+    print: (line) => console.log(line),
   });
-  for (const line of lines) console.log(line);
   process.exit(exitCode);
 }
 

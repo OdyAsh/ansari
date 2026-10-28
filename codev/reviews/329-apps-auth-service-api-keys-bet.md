@@ -244,4 +244,5 @@ This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under 
      1 CHECK two keys created, each printed once: PASS
   ```
 
+- **Review iteration 1 (Codex, REQUEST_CHANGES):** the first version buffered every line and printed them after the run, so the database host reached the screen only after the write. Each line is now printed as it is produced, and the host line is printed before the script connects. The per-subcommand host test asserts the call order (`print` before `connect`). Restoring the buffered printing turns 6 tests red. The Gemini lane was skipped (its CLI exited 3).
 - Green per package: `@ansari/auth` 220 + 1 skipped (the `DEPLOYED_THROUGH` parity check, pending the rebase), `ansari-auth` 336, `ansari-api` 1113 + 3 skipped. Root typecheck and lint pass.
