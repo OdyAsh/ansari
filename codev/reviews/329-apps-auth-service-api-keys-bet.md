@@ -391,6 +391,32 @@ This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under 
 
 Probe outputs, per-phase notes and the pre-existing Sentry reproduction, recorded as each phase ran.
 
+### Secret scan (gitleaks), review phase, 2026-10-28
+
+Pinned gitleaks 8.24.3, the repo's `.gitleaks.toml`, over the branch's history at 5ce51d8:
+`gitleaks git --log-opts=origin/develop..HEAD --config <worktree>/.gitleaks.toml --redact=90 <worktree>`.
+
+```
+8.24.3
+INF 94 commits scanned.
+INF scanned ~767236 bytes (767.24 KB) in 444ms
+INF no leaks found
+exit=0
+```
+
+Negative control: the same scan with only the two spec 329 allowlist entries removed exits 1 with exactly the four
+findings CI reported, all in history and none at the tip (`grep` for either literal over `packages`, `apps`, `docs`
+and `codev` at the tip: 0 hits):
+
+```
+generic-api-key packages/auth/scripts/probes/probe-db.ts 69 90aff8c
+generic-api-key packages/auth/scripts/probes/probe-db.ts 76 90aff8c
+generic-api-key packages/auth/scripts/probes/exchange-lock-probe.ts 240 427f8fd
+generic-api-key packages/auth/scripts/probes/exchange-lock-probe.ts 247 427f8fd
+```
+
+The probes were rerun after `setProbeEnv` moved to `setAuthEnv`: `library-probes.ts` on Postgres 18, 5/5 steps as expected.
+
 ### Probe outputs
 
 #### Phase 1: probe 4 (real Postgres), 2026-10-28
