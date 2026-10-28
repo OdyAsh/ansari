@@ -34,27 +34,24 @@ Seven phases, each one commit in a single PR. The PR does not merge before the s
 
 ## Limit sizing (owner decision 3, deferred to this plan)
 
-Every number below is a named constant in `packages/auth/src/limits.ts`. Inputs, from the legacy WhatsApp service over its last 30 days (requested from the owner by the security architect, 2026-10-28):
+**Sized by judgement, not data (owner, 2026-10-28).** The owner reports low traffic, one WhatsApp service instance initially, and no specific numbers. The caps exist to bound a **leaked key** and a **looping client**, not to meter normal use. So the values below carry about an order of magnitude of headroom over any plausible low-traffic day. The alerts sit well **below** the caps, so a surge is seen before anything is refused. These are the **initial values: the decision, not placeholders.** Every number is a named constant in `packages/auth/src/limits.ts`.
 
-| Input | Meaning |
-|---|---|
-| `P` | peak messages per minute (all users) |
-| `D` | messages per day (the 30-day maximum) |
-| `U` | daily active WhatsApp users (the 30-day maximum) |
-| `N` | WhatsApp service instance count |
+**Why the message rate bounds the exchange rate.** The consumer caches one token per BSUID per process for under 15 minutes. With one instance, a conversation costs about one exchange per 15 minutes, plus one after each restart. A looping or cache-broken client costs one per message. The caps are set against the second case.
 
-**Why the message rate bounds the exchange rate.** The consumer caches one token per BSUID per process for under 15 minutes. So exchanges per minute are at most the message rate (every message misses the cache, e.g. after a restart, or a different instance handles each message). In steady state they are about `min(messages, 4·N per active user per hour)`. Sizing on messages is therefore the safe upper bound, and needs no knowledge of cache hit rates.
-
-| Constant | Formula | PROVISIONAL value (until `P`, `D`, `U`, `N` arrive) |
+| Constant | Initial value | Reasoning |
 |---|---|---|
-| Key per-window ceiling (`rateLimitMax` per `rateLimitTimeWindow` = 60 s), chosen by the operator at creation | `2·P` | 600 / min |
-| Key daily budget (`refillAmount` per `refillInterval` = 24 h), chosen by the operator at creation | `2·D` | 200,000 / day |
-| `WHATSAPP_EXCHANGE_PER_USER` (per user, via `consumeWindow`) | `max(30, 2·4·N)` per 15 min | 30 per 15 min |
-| `WHATSAPP_EXCHANGE_KEY_ALERT` (per-key volume alert) | `1.5·P` per min | 450 / min |
-| `EXCHANGE_UNAUTHORIZED_ALERT` (401 volume alert) | fixed: a healthy consumer sees no 401s except briefly during rotation | 20 per 5 min |
-| `WHATSAPP_KEY_BOUNDS` (what the create script accepts) | set wide enough to hold either outcome | ceiling 10 to 100,000 per window, window 1 s to 1 h; daily budget 100 to 10,000,000 |
+| `WHATSAPP_KEY_INITIAL.rateLimitMax` per `rateLimitTimeWindow` | 60 per 60 s | "tens per minute": far above one instance's normal exchange rate, low enough that a leaked key or a loop is capped within a minute |
+| `WHATSAPP_KEY_INITIAL.refillAmount` per `refillInterval` | 3,000 per 24 h | "low thousands": hundreds of active conversations a day at one exchange per 15 minutes, with headroom |
+| `WHATSAPP_EXCHANGE_PER_USER` (per user, `consumeWindow`) | 6 per 15 min | "a handful per token lifetime": normal use is 1 (plus a restart), and a looping client for one user hits 429 at once |
+| `WHATSAPP_EXCHANGE_KEY_ALERT` (per-key, per minute) | 20 per min | one third of the window cap: a surge alerts before anything is refused |
+| `WHATSAPP_EXCHANGE_DAILY_ALERT` (per-key, per day) | 1,000 per day | one third of the daily budget, for the same reason |
+| `EXCHANGE_UNAUTHORIZED_ALERT` (401 volume) | 20 per 5 min | a healthy consumer sees no 401s except briefly during rotation |
+| `WHATSAPP_KEY_BOUNDS` (what the create and update script accepts) | window cap 1 to 100,000 per window, window 1 s to 24 h; daily budget 1 to 10,000,000 | wide on purpose: raising a value never needs the bound to change, so it needs no code review of the bound |
 
-The two key values are not in code: the operator passes them to the create script, which accepts only values inside `WHATSAPP_KEY_BOUNDS`. The runbook records the formula and the values chosen. When the data arrives, only the PROVISIONAL column and the runbook change; no phase is re-planned. The per-user budget is checked against the case a human cannot exceed: 30 exchanges in 15 minutes means a cache miss on nearly every message of a fast conversation.
+**Applying and changing the key's values.**
+- The key's two values live in the key's row, set by the operator through the script. The spec's no-defaults rule stands: the script requires them as explicit flags. The runbook's issuance command passes `WHATSAPP_KEY_INITIAL`'s values, so the constant is the recorded decision.
+- To change them, the script has an `update-limits` subcommand that calls the plugin's server-side `auth.api.updateApiKey` with the new window cap, window and refill. It is validated against the same bounds, and probed in phase 1. Revoke-and-recreate (a rotation) is the documented fallback. The runbook carries both paths.
+- Changing the per-user budget or an alert threshold is a one-line edit to `limits.ts`.
 
 **Other constants** (not traffic-dependent), all in `limits.ts`:
 
@@ -101,6 +98,7 @@ Add the plugin and its table, and close its HTTP surface in the same commit. Pro
 - [ ] Pinning tests (pglite) for:
   - **Probe 1.** `auth.api.createApiKey({ body: { userId, prefix, name, permissions, metadata, rateLimit…, remaining, refillAmount, refillInterval } })`: the key verifies with the right permission; in its row the raw key appears in no column, `start` is null, and `key === defaultKeyHasher(raw)`; `permissions` and `metadata` round-trip.
   - **Probe 2.** `auth.api.signJWT({ body: { payload: { sub, sid, iat, exp } } })`: the claim set equals a `/api/auth/token` JWT's (keys, `alg`, `iss`, `aud`, `exp − iat`); the passed `exp` is honoured. Without `iat` the claim sets differ, which pins the reason for passing it.
+  - **Probe 1b.** `auth.api.updateApiKey` server-side changes `rateLimitMax`, `rateLimitTimeWindow`, `refillAmount` and `refillInterval` on an existing key, and the change takes effect at the next verify.
   - **Probe 4a.** `phone_number` is absent from `get-session` and sign-in responses, and ignored when sent to sign-up.
   - The probed plugin behaviours: no-refill exhaustion deletes the key; refilled exhaustion refuses and keeps it, and verifies after the interval; disabled is kept; expired is deleted; a wrong permission spends no budget; `valid: false` for an unknown key.
   - `enableSessionForAPIKeys: false`: a valid key as `x-api-key` and as a bearer at `/get-session` and `/token` yields nothing.
@@ -203,9 +201,9 @@ The operator can create a service user and issue, list, rotate and revoke its ke
 
 #### Files to Create / Modify
 
-- `packages/auth/src/limits.ts`: `WHATSAPP_KEY_BOUNDS` (PROVISIONAL, see Limit sizing).
+- `packages/auth/src/limits.ts`: `WHATSAPP_KEY_BOUNDS` and `WHATSAPP_KEY_INITIAL` (see Limit sizing).
 - `packages/auth/src/service-users.ts` (new): `SERVICES`, the fixed map from service name to permissions (`whatsapp → { whatsapp: ['mint'] }`; `mcp-faithful-answers → { mcp: ['complete'] }`, reserved, no route yet). `createServiceUser(db, name)` writes the user (`service-<name>@noreply.askansari.ai`, no credential, role `user`, `registered_via = 'service'`) and its `{ providerId: 'service', accountId: name }` row in one transaction. `findServiceUser(db, name)` resolves by the `service` row and reports zero, one or many.
-- `apps/auth/scripts/service-keys.ts` (new): one script, subcommands `create-service <name>`, `create-key <name> --rate-max --rate-window --daily [--name] [--client-id]`, `list <name>`, `rotate <name> …`, `revoke <name> --key <id>`. Each write takes a `--confirm <service user id>`.
+- `apps/auth/scripts/service-keys.ts` (new): one script, subcommands `create-service <name>`, `create-key <name> --rate-max --rate-window --daily [--name] [--client-id]`, `list <name>`, `rotate <name> …`, `update-limits <name> --key <id> --rate-max --rate-window --daily`, `revoke <name> --key <id>`. Each write takes a `--confirm <service user id>`.
   - It refuses to run without a database URL.
   - Show first; write only with a matching `--confirm` (a mismatch writes nothing, exit 2).
   - Before any write it prints the database hostname and port only (`urlHost`, already in `scripts/cutover/rehearsal-anomalies.ts`, moved to a shared helper).
@@ -226,6 +224,7 @@ The operator can create a service user and issue, list, rotate and revoke its ke
   - list prints no key or hash;
   - rotate → two live keys, both verify;
   - revoke → `enabled = false`, row kept, verify refused;
+  - update-limits → the new values are in the row and enforced at the next verify; out-of-bounds values are refused;
   - refused inputs: a budget without refill, out-of-bounds limits, any expiry flag, an existing service name;
   - the Sentry event is captured with no key material;
   - the service user's address and `service` row are created in one transaction (pglite, a forced failure leaves neither).
@@ -315,8 +314,8 @@ pglite with seams (a hook between resolve and lock) for the interleavings, real 
   - Query `auth.apikey`: `42P01` → refuse.
   - Catalog lookup for the constraint: empty → refuse.
   - Any other error → log `{name, code}` and continue to `listen()`.
-- `apps/auth/src/alerts.ts`: per-key volume, `USAGE_EXCEEDED` and `RATE_LIMITED` (one per window each), 401 volume, eligibility (count) and service user missing. Each carries counts and windows only. The eligibility case also writes one `console.warn` with the user id (the apps/api "app row refused" precedent).
-- `packages/auth/src/limits.ts`: `APIKEY_RELATION_CHECK_TTL`, `EXCHANGE_BODY_LIMIT`, `WHATSAPP_EXCHANGE_KEY_ALERT`, `EXCHANGE_UNAUTHORIZED_ALERT`.
+- `apps/auth/src/alerts.ts`: per-key volume (per minute and per day), `USAGE_EXCEEDED` and `RATE_LIMITED` (one per window each), 401 volume, eligibility (count) and service user missing. Each carries counts and windows only. The eligibility case also writes one `console.warn` with the user id (the apps/api "app row refused" precedent).
+- `packages/auth/src/limits.ts`: `APIKEY_RELATION_CHECK_TTL`, `EXCHANGE_BODY_LIMIT`, `WHATSAPP_EXCHANGE_KEY_ALERT`, `WHATSAPP_EXCHANGE_DAILY_ALERT`, `EXCHANGE_UNAUTHORIZED_ALERT`.
 - `apps/auth/src/alerts.ts` (where `Sentry.init` lives): a `beforeSend` scrub for the exchange path (no body, no `Authorization`).
 - Tests: `apps/auth/tests/whatsapp-session.test.ts` (new), `apps/auth/tests/boot.test.ts` (new), `apps/auth/tests/public-face.test.ts` (route inventory).
 
@@ -372,7 +371,7 @@ Prove an exchange token works in apps/api unchanged, prove apps/api has no Whats
   - rotation overlap and the doubled ceiling;
   - revocation;
   - pruning (none expected);
-  - the limit sizing formula and the values chosen;
+  - the limit values, their judgement-based reasoning, and how to change them (`update-limits`, or revoke-and-recreate);
   - the pre-apply duplicate check for `(provider_id, account_id)`, with the ACCESS EXCLUSIVE lock note and quiet-window guidance;
   - the alert meanings, and the eligibility repair procedure.
 - `codev/resources/arch.md` (Authentication & Authorization): service keys, the exchange, the noreply domain, and the alert posture.
@@ -400,7 +399,7 @@ The contract test through the existing harness; scan negative tests; doc consist
 |------|-------------|--------|------------|
 | A probe contradicts the spec (e.g. `signJWT` overrides `exp`, `returned: false` leaks through an adapter path, the lock pattern waits) | Medium | High | Phase 1 runs every probe first; any difference stops the plan and goes to the security architect before phase 5 |
 | Migration numbering collides with the cutover | Medium | High | Message `architect:main` before committing the journal; rebase expected |
-| The legacy traffic data never arrives | Medium | Low | Formulas plus PROVISIONAL values; bounds wide enough to hold either outcome; the runbook records the values chosen |
+| The judgement-based values prove too low or too high | Medium | Low | Alerts at one third of the caps, so a surge is seen first; `update-limits` changes a key's values without code; bounds are wide, so a raise needs no bound change |
 | The logger change alters an existing test's expectations | Low | Low | Its own commit; affected tests listed in the commit message |
 | Real-Postgres steps are manual, so they can be skipped | Medium | High | Their output is a review deliverable for phases 1, 5 and 6; the plan's acceptance criteria name them |
 | The rebase after the cutover reshapes `index.ts`, `app.ts` or `limits.ts` | High | Low | Tests pin behaviour, not line positions |
