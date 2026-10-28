@@ -321,7 +321,10 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
   - revocation (`enabled = false`), and pruning of expired rows (none expected, since production keys have no expiry);
   - budget sizing (owner decision 3);
   - the pre-apply check that `auth.account` holds no duplicate `(provider_id, account_id)` before `0001`, noting that adding the constraint takes an ACCESS EXCLUSIVE lock on a table every sign-in reads (apply in a quiet window);
-  - the alert meanings.
+  - the alert meanings;
+  - **scheduled rotation**: every 6 months per key, owned by the operator. Production keys have no expiry, so nothing else forces a rotation;
+  - **secret scanning**: a GitHub organisation custom secret-scanning pattern per key prefix (e.g. `wa_` followed by 64 letters), so a key committed to any repository in the organisation is flagged. Configuring it is an owner action in GitHub's settings; the runbook gives the exact patterns.
+- [ ] Each documented secret-scanning pattern is tested in the repo: it matches a freshly created key of its service, and it does not match a near miss (a 63-letter tail, another service's prefix, a session token).
 - [ ] `codev/resources/arch.md` (Authentication & Authorization) describes service keys, the exchange, the noreply domain and the alert posture (counts and hash prefixes in Sentry; user ids only in server log lines).
 - [ ] The runbook gives the repair for an eligibility alert: find the user from the log line, inspect its account rows, role, address and `registered_via`, then remove the stray row or role, or delete the user so the next message recreates them.
 

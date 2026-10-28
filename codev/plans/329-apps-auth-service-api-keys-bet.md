@@ -216,13 +216,13 @@ The operator can create a service user and issue, list, rotate and revoke its ke
 #### Files to Create / Modify
 
 - `packages/auth/src/limits.ts`: `WHATSAPP_KEY_BOUNDS` and `WHATSAPP_KEY_INITIAL` (see Limit sizing).
-- `packages/auth/src/service-users.ts` (new): `SERVICES`, the fixed map from service name to permissions (`whatsapp → { whatsapp: ['mint'] }`; `ansari-mcp → { mcp: ['complete'] }`, reserved, no route yet). `createServiceUser(db, name)` writes the user (`service-<name>@noreply.askansari.ai`, no credential, role `user`, `registered_via = 'service'`) and its `{ providerId: 'service', accountId: name }` row in one transaction. `findServiceUser(db, name)` resolves by the `service` row and reports zero, one or many.
+- `packages/auth/src/service-users.ts` (new): `SERVICES`, the fixed map from service name to permissions and key prefix (`whatsapp → { whatsapp: ['mint'] }, wa_`; `ansari-mcp → { mcp: ['complete'] }, amcp_`, reserved, no route yet). It also exports `SECRET_SCANNING_PATTERNS`, one regex per prefix (`wa_[A-Za-z]{64}`, `amcp_[A-Za-z]{64}`), the patterns the runbook asks the owner to register in GitHub. `createServiceUser(db, name)` writes the user (`service-<name>@noreply.askansari.ai`, no credential, role `user`, `registered_via = 'service'`) and its `{ providerId: 'service', accountId: name }` row in one transaction. `findServiceUser(db, name)` resolves by the `service` row and reports zero, one or many.
 - `apps/auth/scripts/service-keys.ts` (new): one script, subcommands `create-service <name>`, `create-key <name> --rate-max --rate-window --daily [--name] [--client-id]`, `list <name>`, `rotate <name> …`, `update-limits <name> --key <id> --rate-max --rate-window --daily`, `revoke <name> --key <id>`. Each write takes a `--confirm <service user id>`.
   - It refuses to run without a database URL.
   - Show first; write only with a matching `--confirm` (a mismatch writes nothing, exit 2).
   - Before any write it prints the database hostname and port only (`urlHost`, already in `scripts/cutover/rehearsal-anomalies.ts`, moved to a shared helper).
   - It logs the key id acted on.
-  - `create-key` calls `auth.api.createApiKey` with the service's fixed permissions, prefix `wa_`, no expiry, and the operator's limits validated against `WHATSAPP_KEY_BOUNDS`. It refuses a budget without a refill and offers no expiry flag. It prints the raw key once, framed with the handoff instruction.
+  - `create-key` calls `auth.api.createApiKey` with the service's fixed permissions and prefix, no expiry, and the operator's limits validated against `WHATSAPP_KEY_BOUNDS`. It refuses a budget without a refill and offers no expiry flag. It prints the raw key once, framed with the handoff instruction.
   - `revoke` sets `enabled = false` and keeps the row. `rotate` is `create-key`, plus a printed reminder to revoke the old key after the consumer switches.
   - Each create, rotate, update-limits and revoke sends one Sentry event (service, key id, name, action; no key material). The script initialises Sentry and awaits `Sentry.flush` with a timeout before exit. If the flush fails or times out, the write stands, the script prints a loud banner telling the operator to record the key id and action in the runbook's key log, and exits non-zero so it is noticed.
 - `apps/auth/tests/service-keys.test.ts` (new); `apps/auth/tests/helpers/` as needed.
@@ -242,6 +242,7 @@ The operator can create a service user and issue, list, rotate and revoke its ke
   - refused inputs: a budget without refill, out-of-bounds limits, any expiry flag, an existing service name;
   - the Sentry event is captured with no key material, and the script awaits the flush before exit; a failed flush prints the banner and exits non-zero, with the write kept;
   - per subcommand (`create-service`, `create-key`, `list`, `rotate`, `update-limits`, `revoke`): refuses without a database URL; refuses a mismatched `--confirm`; prints hostname and port only; logs the key id it acted on (where a key is involved);
+  - each `SECRET_SCANNING_PATTERNS` entry matches a key freshly created for its service, and does not match a 63-letter tail, the other service's prefix or a 32-character session token;
   - output fields: `list` prints id, name, prefix, permissions, enabled, limits, created and last-request dates per key; `rotate` prints the new key once plus the old key's id; `revoke` prints the key id and `enabled = false`; none prints a key or a hash;
   - the service user's address and `service` row are created in one transaction (pglite, a forced failure leaves neither).
 
@@ -406,7 +407,9 @@ Prove an exchange token works in apps/api unchanged, prove apps/api has no Whats
   - the limit values, their judgement-based reasoning, and how to change them (`update-limits`, or revoke-and-recreate);
   - the pre-apply duplicate check for `(provider_id, account_id)`, with the ACCESS EXCLUSIVE lock note and quiet-window guidance;
   - the alert meanings, and the eligibility repair procedure;
-  - the key log: where the operator records key id and action when a script's Sentry flush fails.
+  - the key log: where the operator records key id and action when a script's Sentry flush fails;
+  - scheduled rotation every 6 months per key, owned by the operator, with the rotate, switch, revoke steps;
+  - secret scanning: the owner registers each `SECRET_SCANNING_PATTERNS` entry as a GitHub organisation custom pattern (Settings → Code security → Secret scanning → Custom patterns), and the runbook says what to do when one fires (revoke at once, rotate, check the alerts for use).
 
   The runbook must not contain a bare `auth-journal-applied:` line outside backticks: the parity test scans `docs/**` for that record.
 - `codev/resources/arch.md` (Authentication & Authorization): that apps/api's first-use refusal covers only the system domain, and why WhatsApp users depend on it; service keys, the exchange, the noreply domain, and the alert posture.
@@ -446,6 +449,8 @@ Each spec success criterion has exactly one acceptance owner. An earlier probe m
 | Service user and `service` row in one transaction; duplicate refused | 4 | `service-keys.test.ts` |
 | Rotate: two live keys; revoke disables and keeps | 4 | `service-keys.test.ts` |
 | Script Sentry events, no key material; flush failure banner and exit code | 4 | `service-keys.test.ts` |
+| Secret-scanning patterns match real keys and reject near misses | 4 | `service-keys.test.ts` |
+| Runbook covers scheduled rotation and secret scanning | 7 | review of `docs/cutover/service-keys-runbook.md` |
 | Refilled exhaustion refuses and keeps, then verifies after the interval | 1 | `tests/config/api-key.test.ts` |
 | `grant-admin.ts` refuses noreply | 3 | `apps/auth/tests/grant-admin.test.ts` |
 | Every key refusal → identical 401, no rows | 6 | `apps/auth/tests/whatsapp-session.test.ts` |
