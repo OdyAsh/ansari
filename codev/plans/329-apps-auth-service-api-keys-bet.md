@@ -210,7 +210,7 @@ The operator can create a service user and issue, list, rotate and revoke its ke
   - It logs the key id acted on.
   - `create-key` calls `auth.api.createApiKey` with the service's fixed permissions, prefix `wa_`, no expiry, and the operator's limits validated against `WHATSAPP_KEY_BOUNDS`. It refuses a budget without a refill and offers no expiry flag. It prints the raw key once, framed with the handoff instruction.
   - `revoke` sets `enabled = false` and keeps the row. `rotate` is `create-key`, plus a printed reminder to revoke the old key after the consumer switches.
-  - Each create, rotate and revoke sends one Sentry event (service, key id, name, action; no key material).
+  - Each create, rotate, update-limits and revoke sends one Sentry event (service, key id, name, action; no key material). The script initialises Sentry and awaits `Sentry.flush` before exit, so the event is not lost when the process ends. A failed flush is reported on stderr, with the action still recorded in the output.
 - `apps/auth/tests/service-keys.test.ts` (new); `apps/auth/tests/helpers/` as needed.
 
 #### Deliverables
@@ -226,7 +226,7 @@ The operator can create a service user and issue, list, rotate and revoke its ke
   - revoke → `enabled = false`, row kept, verify refused;
   - update-limits → the new values are in the row and enforced at the next verify; out-of-bounds values are refused;
   - refused inputs: a budget without refill, out-of-bounds limits, any expiry flag, an existing service name;
-  - the Sentry event is captured with no key material;
+  - the Sentry event is captured with no key material, and the script awaits the flush before exit;
   - the service user's address and `service` row are created in one transaction (pglite, a forced failure leaves neither).
 
 #### Acceptance Criteria
@@ -249,9 +249,9 @@ The exchange's whole decision as a library function in `packages/auth`, testable
 
 - `packages/auth/src/whatsapp.ts` (new):
   - `resolveOrCreateWhatsappUser(db, bsuid, phone)`: a fixed-provider lookup. With no row, one transaction: generate the UUID, insert the user (`whatsapp-<id>@noreply.askansari.ai`, `WhatsApp user`, `registered_via = 'whatsapp'`, `phone_number` when given) and the `whatsapp` account row. A unique violation on `(provider_id, account_id)` rolls back and re-reads the winner. Returns `{ userId, created }`.
-  - `issueWhatsappToken(auth, db, { userId, phone })`: one transaction with `SET LOCAL lock_timeout` / `statement_timeout`.
+  - `issueWhatsappToken(auth, db, { userId, bsuid, phone })`: one transaction with `SET LOCAL lock_timeout` / `statement_timeout`.
     1. `SELECT … FOR NO KEY UPDATE` on the user; gone → `UserGone`.
-    2. Eligibility: sole account row is `whatsapp`, noreply address, `registered_via = 'whatsapp'`, role not admin; else `Ineligible`.
+    2. Eligibility: the user's sole account row is `whatsapp` **with `account_id` equal to this request's BSUID** (so a row re-pointed between resolve and lock is caught), noreply address, `registered_via = 'whatsapp'`, role not admin; else `Ineligible`.
     3. `isBanned` → delete sessions, commit, `Banned`.
     4. The phone number, updated when provided and different.
     5. `iat = now`, `exp = now + JWT lifetime`; reuse a session with `expiresAt ≥ exp + SESSION_MARGIN`, else delete the user's sessions and insert one directly (token `generateId(32)` from better-auth, 30-day `expiresAt`, no IP or user agent).
@@ -274,7 +274,8 @@ The exchange's whole decision as a library function in `packages/auth`, testable
   - forced conflict on the unique constraint → one user, both callers get it;
   - a ban committed between resolve and lock → `Banned`, no session;
   - user deleted between resolve and lock → `UserGone`, no session;
-  - eligibility matrix (a `whatsapp` row on an email, service or admin user; a promoted user; an altered address; an altered `registered_via`) → `Ineligible`, no token;
+  - eligibility matrix (a `whatsapp` row on an email, service or admin user; a promoted user; an altered address; an altered `registered_via`; the `whatsapp` row's `account_id` changed between resolve and lock) → `Ineligible`, no token;
+  - an expired ban (`banExpires` in the past) is not refused;
   - claim-set equality with `/api/auth/token`, and `{sub, sid}` equal to `definePayload`'s output for the same session;
   - a directly written session is accepted by the bearer plugin (`/api/auth/token` with its token) and by `/api/account/me`'s live-sid check;
   - the BSUID appears only in `account.account_id`.
@@ -303,13 +304,13 @@ pglite with seams (a hook between resolve and lock) for the interleavings, real 
   1. Bearer → `verifyApiKey({ key, permissions: { whatsapp: ['mint'] } })`.
   2. On `valid: false`, `checkApiKeyRelation` (a query on `auth.apikey`, success cached for `APIKEY_RELATION_CHECK_TTL`) → 401 or 500. A missing or malformed bearer → 401 with no database query.
   3. `findServiceUser('whatsapp')`: not exactly one → 500 + alert; `referenceId` mismatch → 401.
-  4. Route-local `express.json({ limit: EXCHANGE_BODY_LIMIT })` after the key; sanity bounds → 400.
+  4. Route-local `express.json({ limit: EXCHANGE_BODY_LIMIT })` after the key, followed by a route-local error handler. It maps the parser's errors (`entity.parse.failed`, `entity.too.large`, a wrong content type) to the exact 400 `{ "message": "Invalid request" }`, so no Express error page and no body fragment is ever sent. Sanity bounds → the same 400.
   5. `resolveOrCreateWhatsappUser`.
   6. `consumeWindow` on the pool, keyed `sub:<userId>|/api/whatsapp/session` → 429 with integer `X-Retry-After`.
   7. `issueWhatsappToken` → 200, 403 or 500; a lock timeout → 500.
 
   Every error logs `{name, code}` only. No response contains the bearer, BSUID, phone number or body.
-- `apps/auth/src/app.ts`: mount `app.use(WHATSAPP_SESSION_PATH, whatsappRouter(…))` **before** `app.use(corsFor(…))`, with a comment on why.
+- `apps/auth/src/app.ts`: mount `app.use(WHATSAPP_SESSION_PATH, whatsappRouter(…))` **before** `app.use(corsFor(…))`, with a comment on why. Mounting first is not enough by itself: a request the router does not answer would fall through to `corsFor`, which answers `OPTIONS` preflights. So **the router terminates every request to its path**: `POST` is the exchange; every other method, `OPTIONS` included, gets 404 with an empty body and no `Access-Control-*` header, and never calls `next()`.
 - `apps/auth/src/boot.ts` (new) and `apps/auth/src/index.ts`: `assertSchema(db)` before `listen()`.
   - Query `auth.apikey`: `42P01` → refuse.
   - Catalog lookup for the constraint: empty → refuse.
@@ -323,7 +324,12 @@ pglite with seams (a hook between resolve and lock) for the interleavings, real 
 
 - [ ] Route, mounting, boot assertion, alerts and Sentry scrub.
 - [ ] Tests (HTTP through `startService`):
-  - every key refusal → the byte-identical 401 (missing, non-Bearer, empty, session token, JWT, unknown, disabled, expired, exhausted, rate-limited, `mcp` only, no permissions, another service's `whatsapp: mint` key);
+  - every key refusal → the byte-identical 401 (missing, non-Bearer, empty, session token, JWT, unknown, disabled, expired, exhausted, rate-limited, `mcp` only, no permissions, another service's `whatsapp: mint` key), and after each one the user, account and session row counts are unchanged;
+  - delegation inputs over HTTP: an admin's and an email user's id and email, and a `google` user's `account_id`, passed as `bsuid` → each creates a new WhatsApp user, never the seeded one;
+  - an expired ban is let through;
+  - the `rate_limit` row's key contains the user id and neither the BSUID nor the phone number;
+  - malformed JSON, a wrong content type and an over-limit body → the exact 400 body, with no HTML and no body fragment;
+  - `GET`, `PUT` and `OPTIONS` on the path → 404 with no `Access-Control-*` header;
   - service user missing → 500 + alert;
   - body cases → 400 after a valid key; a body with no key is never parsed (spy);
   - happy path, repeat, 403 banned, 429 with integer `X-Retry-After`;
