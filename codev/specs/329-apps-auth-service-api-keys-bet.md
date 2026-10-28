@@ -72,10 +72,10 @@ It ships as migration `0001`, generated, reviewed as SQL, applied by hand before
 **A service is one auth user**, created only by an operator script:
 - address `service-<service name>@noreply.askansari.ai` (Part 4), no credential, role `user`;
 - exactly one account row `{ providerId: 'service', accountId: <service name> }`, which is how it is resolved (never by email);
-- one user per service: `whatsapp` now; later `mcp-faithful-answers`, and the leaderboard if it migrates;
+- one user per service: `whatsapp` now; later `ansari-mcp`, and the leaderboard if it migrates;
 - it cannot sign in: there is no `service` provider in Better Auth, and it has no credential.
 
-**Permissions are fixed per service, in code.** The script takes no free-form permissions. The `whatsapp` service gets `{ whatsapp: ['mint'] }`, and `mcp-faithful-answers` will get `{ mcp: ['complete'] }` (#314).
+**Permissions are fixed per service, in code.** The script takes no free-form permissions. The `whatsapp` service gets `{ whatsapp: ['mint'] }`, and `ansari-mcp` will get `{ mcp: ['complete'] }` (#314).
 
 **Keys are created in-process with `auth.api.createApiKey`**, server-side, with the service user's id. They are never inserted by hand, so the plugin's own hashing, `permissions` and `metadata` handling apply. `enableMetadata: true`; `startingCharactersConfig.shouldStore: false`. The plan's first probe proves this path: a script-created key verifies at the exchange, its row holds exactly the hash, and no column holds any substring of the raw key.
 
@@ -209,7 +209,7 @@ A second reserved domain, **`@noreply.askansari.ai`** (owner decision 1), for se
 | Account | Address | How many |
 |---|---|---|
 | WhatsApp user | `whatsapp-<user id>@noreply.askansari.ai` | one per person who messages Ansari on WhatsApp |
-| Service user | `service-<service name>@noreply.askansari.ai`, e.g. `service-whatsapp@…`, later `service-mcp-faithful-answers@…` | one per service that holds an API key |
+| Service user | `service-<service name>@noreply.askansari.ai`, e.g. `service-whatsapp@…`, later `service-ansari-mcp@…` | one per service that holds an API key |
 
 Prefixes keep each kind together in listings and logs. The reserved check looks only at the domain, and nothing ever finds a user by email, so the prefix carries no security weight. Ordinary `@askansari.ai` addresses (staff, admins) are not reserved.
 

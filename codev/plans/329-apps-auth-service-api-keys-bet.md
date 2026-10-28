@@ -216,7 +216,7 @@ The operator can create a service user and issue, list, rotate and revoke its ke
 #### Files to Create / Modify
 
 - `packages/auth/src/limits.ts`: `WHATSAPP_KEY_BOUNDS` and `WHATSAPP_KEY_INITIAL` (see Limit sizing).
-- `packages/auth/src/service-users.ts` (new): `SERVICES`, the fixed map from service name to permissions (`whatsapp → { whatsapp: ['mint'] }`; `mcp-faithful-answers → { mcp: ['complete'] }`, reserved, no route yet). `createServiceUser(db, name)` writes the user (`service-<name>@noreply.askansari.ai`, no credential, role `user`, `registered_via = 'service'`) and its `{ providerId: 'service', accountId: name }` row in one transaction. `findServiceUser(db, name)` resolves by the `service` row and reports zero, one or many.
+- `packages/auth/src/service-users.ts` (new): `SERVICES`, the fixed map from service name to permissions (`whatsapp → { whatsapp: ['mint'] }`; `ansari-mcp → { mcp: ['complete'] }`, reserved, no route yet). `createServiceUser(db, name)` writes the user (`service-<name>@noreply.askansari.ai`, no credential, role `user`, `registered_via = 'service'`) and its `{ providerId: 'service', accountId: name }` row in one transaction. `findServiceUser(db, name)` resolves by the `service` row and reports zero, one or many.
 - `apps/auth/scripts/service-keys.ts` (new): one script, subcommands `create-service <name>`, `create-key <name> --rate-max --rate-window --daily [--name] [--client-id]`, `list <name>`, `rotate <name> …`, `update-limits <name> --key <id> --rate-max --rate-window --daily`, `revoke <name> --key <id>`. Each write takes a `--confirm <service user id>`.
   - It refuses to run without a database URL.
   - Show first; write only with a matching `--confirm` (a mismatch writes nothing, exit 2).
