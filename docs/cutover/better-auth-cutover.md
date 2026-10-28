@@ -346,6 +346,7 @@ already holds data, staging; not this one.)
 
 ```bash
 for f in $(node apps/auth/scripts/cutover/auth-journal.mjs files); do psql "$AUTH_DATABASE_URL" -X -v ON_ERROR_STOP=1 --single-transaction -f "$f" || break; done
+set -o pipefail
 node apps/auth/scripts/cutover/auth-journal.mjs check | psql "$AUTH_DATABASE_URL" -X -q -At -v ON_ERROR_STOP=1
 ```
 
@@ -354,8 +355,12 @@ that checks each migration's objects (every schema, table, column, constraint an
 creates), so a later migration needs no edit here. A failed apply stops the loop, and the check
 then names what is missing.
 
+`set -o pipefail` (bash and zsh) makes the check line fail when `auth-journal.mjs` fails, instead
+of psql reading empty input and exiting 0.
+
 **Check:** the check prints one `<tag>|t` line per file `files` listed, in the same order, and
-nothing else (it fails, naming the migrations, when one is not applied), and
+nothing else (it fails, naming the migrations, when one is not applied). **No output at all is a
+failure**: stop. And
 `psql "$AUTH_DATABASE_URL" -X -At -c "select count(*) from auth.users"` prints `0`.
 Record one `auth-journal-applied: <tag>` line per tag it printed, and the commit. Now the auth URL also answers
 for the auth schema: `psql "$AUTH_DATABASE_URL" -X -At -c "select to_regclass('auth.users')"`

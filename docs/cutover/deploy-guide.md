@@ -125,7 +125,8 @@ both databases and record their ids.
 
 ```bash
 for f in $(node apps/auth/scripts/cutover/auth-journal.mjs files); do psql "$AUTH_DATABASE_URL" -X -v ON_ERROR_STOP=1 --single-transaction -f "$f" || break; done
-node apps/auth/scripts/cutover/auth-journal.mjs check | psql "$AUTH_DATABASE_URL" -X -q -At -v ON_ERROR_STOP=1   # one <tag>|t per file, in order
+set -o pipefail
+node apps/auth/scripts/cutover/auth-journal.mjs check | psql "$AUTH_DATABASE_URL" -X -q -At -v ON_ERROR_STOP=1   # one <tag>|t per file, in order; no output at all is a failure
 ```
 
 ## 4. Copy the users

@@ -380,10 +380,14 @@ describe('the deployment guide', () => {
     for (const [name, text] of [['runbook step 5', step5], ['guide step 3', step3]] as const) {
       expect(text, name).toContain(apply);
       expect(text, name).toContain(check);
+      // Interactive shells have no pipefail: without it a failed `check` gives psql empty input, exit 0.
+      expect(text, name).toContain(`set -o pipefail\n${check}`);
       expect(text, name).not.toMatch(/-f packages\/auth\/drizzle\/\d{4}_/);
       expect(text, name).not.toMatch(/table_schema = 'auth'/);
     }
     expect(step5).toMatch(/one `<tag>\|t` line per file `files` listed, in the same order/);
+    expect(step5).toContain('**No output at all is a\nfailure**: stop.');
+    expect(step3).toContain('no output at all is a failure');
     expect(step5).toContain('Record one `auth-journal-applied: <tag>` line per tag it printed');
     expect(runbook.indexOf(apply)).toBeLessThan(runbook.indexOf('## 6. The copy and the audits'));
     expect(guide.indexOf(apply)).toBeLessThan(guide.indexOf('## 4. Copy the users'));
