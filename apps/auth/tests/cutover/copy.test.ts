@@ -129,11 +129,17 @@ function preflightQuery(heading: string): string {
 let app: PGlite;
 let auth: PGlite;
 
+// This hook's own deadline, above the config's 30 s (#292's value). Two
+// pglite cold starts (the app and auth journals) took 27-53 s when the whole
+// monorepo's tests ran at once on a shared machine (measured for spec 329; the
+// #290/#292/#301 class). 100 s is about twice the observed maximum.
+const SETUP_DEADLINE_MS = 100_000;
+
 beforeEach(async () => {
   bcryptHash ??= await bcrypt.hash(PASSWORD, 4);
   app = await appDatabase();
   auth = await migrate();
-});
+}, SETUP_DEADLINE_MS);
 
 afterEach(async () => {
   await app?.close();
