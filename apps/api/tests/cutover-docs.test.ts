@@ -85,7 +85,8 @@ describe('the window runbook', () => {
   });
 
   it('applies every migration with both psql flags, naming the database', () => {
-    const applies = doc.split('\n').filter((l) => /psql .*-f \S*drizzle\/\S+\.sql/.test(l));
+    // The app window migrations by file; the auth journal by its loop, one file at a time (spec 329).
+    const applies = doc.split('\n').filter((l) => /psql .*-f \S*drizzle\/\S+\.sql/.test(l) || /auth-journal\.mjs files/.test(l));
     expect(applies.length).toBe(4);
     for (const line of applies) {
       expect(line).toMatch(/psql "\$(APP|AUTH)_DATABASE_URL" -X -v ON_ERROR_STOP=1 --single-transaction -f /);
@@ -368,6 +369,26 @@ describe('the deployment guide', () => {
     expect(commands.length).toBeGreaterThan(25);
   });
 
+  // Main architect, 2026-10-28: both pages apply the WHOLE auth journal in _journal.json order, one
+  // single-transaction psql per file, before the copy, and check it per migration from the journal.
+  it('applies the whole auth journal before the copy, checked from the journal, never a hardcoded table count', () => {
+    const apply =
+      'for f in $(node apps/auth/scripts/cutover/auth-journal.mjs files); do psql "$AUTH_DATABASE_URL" -X -v ON_ERROR_STOP=1 --single-transaction -f "$f" || break; done';
+    const check = 'node apps/auth/scripts/cutover/auth-journal.mjs check | psql "$AUTH_DATABASE_URL" -X -q -At -v ON_ERROR_STOP=1';
+    const step5 = runbook.slice(runbook.indexOf('## 5. The auth baseline'), runbook.indexOf('## 6. '));
+    const step3 = guide.slice(guide.indexOf('## 3. Auth schema'), guide.indexOf('## 4. '));
+    for (const [name, text] of [['runbook step 5', step5], ['guide step 3', step3]] as const) {
+      expect(text, name).toContain(apply);
+      expect(text, name).toContain(check);
+      expect(text, name).not.toMatch(/-f packages\/auth\/drizzle\/\d{4}_/);
+      expect(text, name).not.toMatch(/table_schema = 'auth'/);
+    }
+    expect(step5).toMatch(/one `<tag>\|t` line per file `files` listed, in the same order/);
+    expect(step5).toContain('Record one `auth-journal-applied: <tag>` line per tag it printed');
+    expect(runbook.indexOf(apply)).toBeLessThan(runbook.indexOf('## 6. The copy and the audits'));
+    expect(guide.indexOf(apply)).toBeLessThan(guide.indexOf('## 4. Copy the users'));
+  });
+
   it.each(commands)('runs the runbook command: %s', (line) => {
     const literal = line.replace(/\$API\b/g, 'https://api.askansari.ai').replace(/\$AUTH\b/g, 'https://auth.askansari.ai');
     // The runbook writes some auth-side checks as "the same for `$AUTH_DATABASE_URL`".
@@ -377,7 +398,7 @@ describe('the deployment guide', () => {
 
   it('follows the runbook order: baseline, copy, app migrations, admins, domain, merge', () => {
     const at = (s: string) => guide.indexOf(s);
-    const order = ['0000_auth_schema.sql', 'cutover/copy.sh', '0011_better_auth_window.sql', 'grant-admin.ts', '/health', 'git push origin', 'MAINTENANCE_MODE=false` on `backend`. Then'];
+    const order = ['auth-journal.mjs files', 'cutover/copy.sh', '0011_better_auth_window.sql', 'grant-admin.ts', '/health', 'git push origin', 'MAINTENANCE_MODE=false` on `backend`. Then'];
     const positions = order.map(at);
     expect(positions.every((p) => p > 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
