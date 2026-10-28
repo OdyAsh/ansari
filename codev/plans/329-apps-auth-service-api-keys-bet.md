@@ -1,0 +1,413 @@
+# Plan: Service API keys and the WhatsApp token exchange (apps/auth)
+
+**Specification**: [codev/specs/329-apps-auth-service-api-keys-bet.md](../specs/329-apps-auth-service-api-keys-bet.md)
+
+## Executive Summary
+
+The plan implements the spec's Approach 1:
+- `@better-auth/api-key` 1.7.7 for keys, created in-process by operator scripts, with its HTTP surface blocked by derivation and prefix, and better-auth's logger redacted;
+- the WhatsApp user, account and session rows written directly with Drizzle;
+- the exchange's decision (eligibility, ban, phone number, session, signing) made in one transaction holding `FOR NO KEY UPDATE` on the user row.
+
+The order follows three rules:
+1. **Probe before building.** Phase 1 proves the library paths the spec marks as unproven (`createApiKey` from a script, `shouldStore: false`, `signJWT` claims, `returned: false` / `input: false`, the lock pattern on real Postgres) before anything depends on them.
+2. **No commit publishes a surface it does not also guard.** The plugin is wired in the same commit that blocks its routes. The exchange route lands with its CORS placement, key check and timeouts in one commit.
+3. **Library before service.** The identity and session core lives in `packages/auth` and is tested on pglite, then the apps/auth route wraps it.
+
+Seven phases, each one commit in a single PR. The PR does not merge before the spec 300 production cutover and its contract PR; a rebase is expected.
+
+## Phases (Machine Readable)
+
+```json
+{
+  "phases": [
+    {"id": "phase_1", "title": "Plugin, schema and migration 0001, blocked key surface, library probes"},
+    {"id": "phase_2", "title": "Redacted Better Auth logger"},
+    {"id": "phase_3", "title": "Reserved noreply domain"},
+    {"id": "phase_4", "title": "Service users and key operator scripts"},
+    {"id": "phase_5", "title": "WhatsApp identity and session core"},
+    {"id": "phase_6", "title": "The exchange route, boot assertion and alerts"},
+    {"id": "phase_7", "title": "End-to-end contract test, source scan and documentation"}
+  ]
+}
+```
+
+## Limit sizing (owner decision 3, deferred to this plan)
+
+Every number below is a named constant in `packages/auth/src/limits.ts`. Inputs, from the legacy WhatsApp service over its last 30 days (requested from the owner by the security architect, 2026-10-28):
+
+| Input | Meaning |
+|---|---|
+| `P` | peak messages per minute (all users) |
+| `D` | messages per day (the 30-day maximum) |
+| `U` | daily active WhatsApp users (the 30-day maximum) |
+| `N` | WhatsApp service instance count |
+
+**Why the message rate bounds the exchange rate.** The consumer caches one token per BSUID per process for under 15 minutes. So exchanges per minute are at most the message rate (every message misses the cache, e.g. after a restart, or a different instance handles each message). In steady state they are about `min(messages, 4·N per active user per hour)`. Sizing on messages is therefore the safe upper bound, and needs no knowledge of cache hit rates.
+
+| Constant | Formula | PROVISIONAL value (until `P`, `D`, `U`, `N` arrive) |
+|---|---|---|
+| Key per-window ceiling (`rateLimitMax` per `rateLimitTimeWindow` = 60 s), chosen by the operator at creation | `2·P` | 600 / min |
+| Key daily budget (`refillAmount` per `refillInterval` = 24 h), chosen by the operator at creation | `2·D` | 200,000 / day |
+| `WHATSAPP_EXCHANGE_PER_USER` (per user, via `consumeWindow`) | `max(30, 2·4·N)` per 15 min | 30 per 15 min |
+| `WHATSAPP_EXCHANGE_KEY_ALERT` (per-key volume alert) | `1.5·P` per min | 450 / min |
+| `EXCHANGE_UNAUTHORIZED_ALERT` (401 volume alert) | fixed: a healthy consumer sees no 401s except briefly during rotation | 20 per 5 min |
+| `WHATSAPP_KEY_BOUNDS` (what the create script accepts) | set wide enough to hold either outcome | ceiling 10 to 100,000 per window, window 1 s to 1 h; daily budget 100 to 10,000,000 |
+
+The two key values are not in code: the operator passes them to the create script, which accepts only values inside `WHATSAPP_KEY_BOUNDS`. The runbook records the formula and the values chosen. When the data arrives, only the PROVISIONAL column and the runbook change; no phase is re-planned. The per-user budget is checked against the case a human cannot exceed: 30 exchanges in 15 minutes means a cache miss on nearly every message of a fast conversation.
+
+**Other constants** (not traffic-dependent), all in `limits.ts`:
+
+| Constant | Value | Why |
+|---|---|---|
+| `APIKEY_RELATION_CHECK_TTL` | 5 s | bounds the pre-401 check under an unknown-key flood; also the length of the misclassification residual |
+| `SESSION_MARGIN` | 5 min | the session must outlive the token's `exp` by at least this much |
+| `EXCHANGE_LOCK_TIMEOUT` | 2 s | a held user row fails one request, not the pool |
+| `EXCHANGE_STATEMENT_TIMEOUT` | 5 s | the same, for any slow statement in the transaction |
+| `EXCHANGE_BODY_LIMIT` | 1 KB | `bsuid` ≤ 256 + `phone_number` ≤ 32 + JSON overhead |
+
+## Phase Breakdown
+
+### Phase 1: Plugin, schema and migration 0001, blocked key surface, library probes
+
+**Dependencies**: None
+
+#### Objective
+
+Add the plugin and its table, and close its HTTP surface in the same commit. Prove every library behaviour the later phases rely on, so a wrong assumption surfaces before code is built on it.
+
+#### Files to Create / Modify
+
+- `packages/auth/package.json`, `pnpm-lock.yaml`: `@better-auth/api-key` pinned to `1.7.7` (exact).
+- `packages/auth/src/schema.ts`: the `apikey` table, mirroring the plugin's model with generator column names, uuid id, `timestamptz`, and `reference_id` uuid → `auth.users` on delete cascade. `users.phoneNumber` (`phone_number`, nullable text). `unique('account_provider_id_account_id_unique').on(providerId, accountId)` on `account`. The header comment records the departures.
+- `packages/auth/drizzle/0001_*.sql`, `drizzle/meta/_journal.json`, `drizzle/meta/0001_snapshot.json`: generated by `pnpm --filter @ansari/auth db:generate`, SQL reviewed. **Before committing the journal entry, message `architect:main` so main numbers it.**
+- `packages/auth/src/index.ts`:
+  - the `apiKey({ enableMetadata: true, startingCharactersConfig: { shouldStore: false }, enableSessionForAPIKeys: false, rateLimit: { enabled: true } })` plugin;
+  - `API_KEY_PATHS`, derived from `apiKey().endpoints` and filtered to defined paths;
+  - `BLOCKED_AUTH_PATHS` including them;
+  - the `phone_number` additional user field (`input: false`, `returned: false`).
+- `apps/auth/src/middleware/blocked-paths.ts`: an `/api/auth/api-key` prefix rule beside `ADMIN_PREFIX`.
+- `packages/auth/tests/migration/auth-journal-parity.test.ts`: the "single fresh 0000" assertion becomes "0000 then 0001". `AUTH_DEPLOYED_THROUGH` is untouched (main's).
+- `packages/auth/tests/schema/auth-schema.test.ts`: seven tables; `apikey` shape; `account (provider_id, account_id)` unique; `users.phone_number`.
+- `packages/auth/tests/config/api-key.test.ts` (new): probes 1, 2 and 4a as permanent pinning tests.
+- `apps/auth/tests/blocked-paths.test.ts`: the API-key surface tests.
+- `apps/auth/scripts/probes/exchange-lock-probe.ts` (new, operator-run): probe 4 against a throwaway Postgres 18 container.
+
+#### Deliverables
+
+- [ ] Plugin pinned and wired; table and migration `0001` generated and reviewed; main consulted before the journal commit.
+- [ ] `API_KEY_PATHS` derived with assertions **7 endpoints, 5 routed**, and no `undefined` in `disabledPaths` or the middleware's set.
+- [ ] Prefix rule; the finite variant list from the spec blocked for all 5 paths, plus `/verify` and `/delete-all-expired-api-keys` under the prefix.
+- [ ] Pinning tests (pglite) for:
+  - **Probe 1.** `auth.api.createApiKey({ body: { userId, prefix, name, permissions, metadata, rateLimit…, remaining, refillAmount, refillInterval } })`: the key verifies with the right permission; in its row the raw key appears in no column, `start` is null, and `key === defaultKeyHasher(raw)`; `permissions` and `metadata` round-trip.
+  - **Probe 2.** `auth.api.signJWT({ body: { payload: { sub, sid, iat, exp } } })`: the claim set equals a `/api/auth/token` JWT's (keys, `alg`, `iss`, `aud`, `exp − iat`); the passed `exp` is honoured. Without `iat` the claim sets differ, which pins the reason for passing it.
+  - **Probe 4a.** `phone_number` is absent from `get-session` and sign-in responses, and ignored when sent to sign-up.
+  - The probed plugin behaviours: no-refill exhaustion deletes the key; refilled exhaustion refuses and keeps it, and verifies after the interval; disabled is kept; expired is deleted; a wrong permission spends no budget; `valid: false` for an unknown key.
+  - `enableSessionForAPIKeys: false`: a valid key as `x-api-key` and as a bearer at `/get-session` and `/token` yields nothing.
+- [ ] **Probe 4** (real Postgres 18, `exchange-lock-probe.ts`, run by the builder against `docker run postgres:18`, output pasted into the review). Every step under a deadline that fails red:
+  - under `FOR NO KEY UPDATE` on a user row, a session row inserted in the same transaction commits without waiting;
+  - a ban (`UPDATE users SET banned…; DELETE FROM session…`) on another connection waits for the exchange and then deletes its session;
+  - a session insert from another connection does not wait on the lock (`KEY SHARE` compatibility);
+  - `lock_timeout` turns a held `FOR UPDATE` from another connection into error `55P03`.
+
+#### Acceptance Criteria
+
+- [ ] `pnpm --filter @ansari/auth test`, `pnpm --filter ansari-auth test`, typecheck and lint pass.
+- [ ] The migration SQL creates exactly the `apikey` table, the `account` unique constraint and the `users.phone_number` column, and nothing else.
+- [ ] Probe 4's output shows all four results. If any differs, stop and raise it with the security architect before phase 5.
+
+#### Test Plan
+
+Pinning tests on pglite as above. The probe 4 script is manual, against a disposable container. The blocked-path tests reuse the admin-path variant helper.
+
+### Phase 2: Redacted Better Auth logger
+
+**Dependencies**: Phase 1 (the plugin is the reason, and its catch-and-log path is the test case)
+
+#### Objective
+
+Make better-auth's logger obey the repo rule "never log a raw driver error", without silencing it. This is its own commit, because it changes every better-auth log line in apps/auth.
+
+#### Files to Create / Modify
+
+- `packages/auth/src/logger.ts` (new): `redactLogArgs`. An `Error` argument becomes exactly `{ name, code }`, where `code` comes from the error's own `code` or its `cause`'s, the same rule as `account.ts`'s `errorMeta`. Every other argument passes through unchanged. A `log(level, message, ...args)` writes through `console` at the matching level.
+- `packages/auth/src/index.ts`: `logger: { log: … }` in `createAuth`.
+- `packages/auth/tests/unit/logger.test.ts` (new).
+
+#### Deliverables
+
+- [ ] The redacting logger, wired into `createAuth`.
+- [ ] Tests (probe 3):
+  - a non-error log survives with its level and message;
+  - a pg `DatabaseError` (built with `code: '42P01'` and a message containing an email) reduces to exactly `{ name: 'DatabaseError', code: '42P01' }`;
+  - near misses survive unchanged: a plain object with `name`/`code` fields, and a string argument;
+  - the plugin's own path: `verifyApiKey` against a pglite database with `auth.apikey` dropped logs only the redacted form, and returns `valid: false` / `INVALID_API_KEY`, which pins the outage mapping phase 6 relies on.
+
+#### Acceptance Criteria
+
+- [ ] All suites pass. No existing test that asserts better-auth log output needs editing, or each one that does is listed in the commit message.
+- [ ] The criterion cannot be met by disabling the logger: the non-error survival test fails if `disabled: true`.
+
+#### Test Plan
+
+Unit tests on the formatter. Integration through `verifyApiKey` with the relation dropped, capturing `console.error`.
+
+### Phase 3: Reserved noreply domain
+
+**Dependencies**: None (independent of phases 1 and 2; ordered here so phase 4's scripts can rely on it)
+
+#### Objective
+
+Reserve `@noreply.askansari.ai` on every public path, while `isSystemAddress` stays exactly as it is.
+
+#### Files to Create / Modify
+
+- `packages/auth/src/reserved.ts`:
+  - `NOREPLY_EMAIL_DOMAIN = '@noreply.askansari.ai'` and `isNoreplyAddress`;
+  - `isReservedAddress` = system **or** noreply;
+  - address builders `whatsappAddress(userId)` and `serviceAddress(name)`.
+
+  `isSystemAddress` and `SYSTEM_EMAIL_DOMAIN` are unchanged.
+- `packages/auth/src/reset-email.ts`: the sender skips any reserved address (`isReservedAddress`), not only system ones.
+- `packages/auth/src/index.ts`: exports. The hook and `signUpGuard` already call `isReservedAddress`, so they need no logic change.
+- `apps/auth/scripts/grant-admin.ts`: refuse a noreply address, as it refuses the system domain.
+- Tests: `packages/auth/tests/config/sign-up.test.ts`, `packages/auth/tests/unit/reset-email.test.ts`, `apps/auth/tests/reset.test.ts`, `apps/auth/tests/grant-admin.test.ts`, and a new `packages/auth/tests/unit/reserved.test.ts`.
+
+#### Deliverables
+
+- [ ] Reserved check, reset skip, `grant-admin.ts` refusal and address builders.
+- [ ] Tests:
+  - sign-up with a noreply address (mixed case, surrounding spaces) returns the 409 body identical to a taken address;
+  - near misses `someone@askansari.ai`, `x@noreply.askansari.ai.example.com` and `x@notnoreply.askansari.ai` sign up;
+  - a reset request for an existing noreply user returns the response an unknown address gets, with the mailer never called;
+  - the `user.create.before` hook refuses both domains;
+  - sign-in for a noreply user returns the same response as an unknown address;
+  - `grant-admin.ts` refuses a noreply address;
+  - `isSystemAddress` tests pass unedited.
+
+#### Acceptance Criteria
+
+- [ ] All suites pass, and `isSystemAddress` / `SYSTEM_EMAIL_DOMAIN` are byte-unchanged in the diff.
+
+#### Test Plan
+
+Through `auth.api` and the apps/auth HTTP harness (`startService`), as the existing sign-up and reset tests do.
+
+### Phase 4: Service users and key operator scripts
+
+**Dependencies**: Phases 1 and 3
+
+#### Objective
+
+The operator can create a service user and issue, list, rotate and revoke its keys, in `grant-admin.ts`'s posture, with the raw key printed once and a durable record of every action.
+
+#### Files to Create / Modify
+
+- `packages/auth/src/limits.ts`: `WHATSAPP_KEY_BOUNDS` (PROVISIONAL, see Limit sizing).
+- `packages/auth/src/service-users.ts` (new): `SERVICES`, the fixed map from service name to permissions (`whatsapp → { whatsapp: ['mint'] }`; `mcp-faithful-answers → { mcp: ['complete'] }`, reserved, no route yet). `createServiceUser(db, name)` writes the user (`service-<name>@noreply.askansari.ai`, no credential, role `user`, `registered_via = 'service'`) and its `{ providerId: 'service', accountId: name }` row in one transaction. `findServiceUser(db, name)` resolves by the `service` row and reports zero, one or many.
+- `apps/auth/scripts/service-keys.ts` (new): one script, subcommands `create-service <name>`, `create-key <name> --rate-max --rate-window --daily [--name] [--client-id]`, `list <name>`, `rotate <name> …`, `revoke <name> --key <id>`. Each write takes a `--confirm <service user id>`.
+  - It refuses to run without a database URL.
+  - Show first; write only with a matching `--confirm` (a mismatch writes nothing, exit 2).
+  - Before any write it prints the database hostname and port only (`urlHost`, already in `scripts/cutover/rehearsal-anomalies.ts`, moved to a shared helper).
+  - It logs the key id acted on.
+  - `create-key` calls `auth.api.createApiKey` with the service's fixed permissions, prefix `wa_`, no expiry, and the operator's limits validated against `WHATSAPP_KEY_BOUNDS`. It refuses a budget without a refill and offers no expiry flag. It prints the raw key once, framed with the handoff instruction.
+  - `revoke` sets `enabled = false` and keeps the row. `rotate` is `create-key`, plus a printed reminder to revoke the old key after the consumer switches.
+  - Each create, rotate and revoke sends one Sentry event (service, key id, name, action; no key material).
+- `apps/auth/tests/service-keys.test.ts` (new); `apps/auth/tests/helpers/` as needed.
+
+#### Deliverables
+
+- [ ] `service-users.ts` and the script, with all of the above.
+- [ ] Tests:
+  - no database URL → refused;
+  - show writes nothing; a mismatched confirm writes nothing;
+  - the output for `postgres://user:secret@db.example:6543/auth?sslmode=require` contains `db.example:6543` and none of `user`, `secret`, `sslmode`;
+  - the create output contains the raw key exactly once, and the row holds only its hash (probe 1's assertions);
+  - list prints no key or hash;
+  - rotate → two live keys, both verify;
+  - revoke → `enabled = false`, row kept, verify refused;
+  - refused inputs: a budget without refill, out-of-bounds limits, any expiry flag, an existing service name;
+  - the Sentry event is captured with no key material;
+  - the service user's address and `service` row are created in one transaction (pglite, a forced failure leaves neither).
+
+#### Acceptance Criteria
+
+- [ ] All suites pass. Running each subcommand by hand from `apps/auth/` against a pglite-backed test database produces the documented output.
+
+#### Test Plan
+
+Script functions are tested directly, as `grant-admin.test.ts` tests its parser and actions. Sentry through the existing test transport.
+
+### Phase 5: WhatsApp identity and session core
+
+**Dependencies**: Phases 1 (schema, signJWT behaviour, lock probe) and 3 (address builders)
+
+#### Objective
+
+The exchange's whole decision as a library function in `packages/auth`, testable on pglite without HTTP: resolve or create the user, then, under the lock, check eligibility and ban, update the phone number, write the session and sign.
+
+#### Files to Create / Modify
+
+- `packages/auth/src/whatsapp.ts` (new):
+  - `resolveOrCreateWhatsappUser(db, bsuid, phone)`: a fixed-provider lookup. With no row, one transaction: generate the UUID, insert the user (`whatsapp-<id>@noreply.askansari.ai`, `WhatsApp user`, `registered_via = 'whatsapp'`, `phone_number` when given) and the `whatsapp` account row. A unique violation on `(provider_id, account_id)` rolls back and re-reads the winner. Returns `{ userId, created }`.
+  - `issueWhatsappToken(auth, db, { userId, phone })`: one transaction with `SET LOCAL lock_timeout` / `statement_timeout`.
+    1. `SELECT … FOR NO KEY UPDATE` on the user; gone → `UserGone`.
+    2. Eligibility: sole account row is `whatsapp`, noreply address, `registered_via = 'whatsapp'`, role not admin; else `Ineligible`.
+    3. `isBanned` → delete sessions, commit, `Banned`.
+    4. The phone number, updated when provided and different.
+    5. `iat = now`, `exp = now + JWT lifetime`; reuse a session with `expiresAt ≥ exp + SESSION_MARGIN`, else delete the user's sessions and insert one directly (token `generateId(32)` from better-auth, 30-day `expiresAt`, no IP or user agent).
+    6. `auth.api.signJWT({ body: { payload: { sub, sid, iat, exp } } })`.
+    7. Commit, return the token.
+
+    Typed outcomes, not thrown strings.
+- `packages/auth/src/limits.ts`: `SESSION_MARGIN`, `EXCHANGE_LOCK_TIMEOUT`, `EXCHANGE_STATEMENT_TIMEOUT`, `WHATSAPP_EXCHANGE_PER_USER`.
+- `packages/auth/src/users.ts`: fix the stale "boot assertion" header line once phase 6 adds one (or here, worded for phase 6).
+- `packages/auth/tests/whatsapp.test.ts` (new); rerun `apps/auth/scripts/probes/exchange-lock-probe.ts` against the real functions.
+
+#### Deliverables
+
+- [ ] Both functions, with typed outcomes.
+- [ ] Tests (pglite):
+  - new BSUID → one user (exact address), one account row, one session, with `phone_number` stored when given;
+  - repeat → same `sub` and `sid`;
+  - margin → replaced, old deleted;
+  - phone: updated when different, untouched when absent, only in its column (scan every row and column);
+  - forced conflict on the unique constraint → one user, both callers get it;
+  - a ban committed between resolve and lock → `Banned`, no session;
+  - user deleted between resolve and lock → `UserGone`, no session;
+  - eligibility matrix (a `whatsapp` row on an email, service or admin user; a promoted user; an altered address; an altered `registered_via`) → `Ineligible`, no token;
+  - claim-set equality with `/api/auth/token`, and `{sub, sid}` equal to `definePayload`'s output for the same session;
+  - a directly written session is accepted by the bearer plugin (`/api/auth/token` with its token) and by `/api/account/me`'s live-sid check;
+  - the BSUID appears only in `account.account_id`.
+- [ ] A source-level test: the eligibility re-read, ban check, phone update, session write and `signJWT` sit inside the `FOR NO KEY UPDATE` transaction body.
+- [ ] Probe 4 rerun against these functions on real Postgres; output in the review.
+
+#### Acceptance Criteria
+
+- [ ] All suites pass; probe 4 green on real Postgres under deadlines.
+
+#### Test Plan
+
+pglite with seams (a hook between resolve and lock) for the interleavings, real Postgres for the lock itself, and source-level for transaction scope. Each states what it proves, per the spec.
+
+### Phase 6: The exchange route, boot assertion and alerts
+
+**Dependencies**: Phases 1, 2, 4 and 5
+
+#### Objective
+
+`POST /api/whatsapp/session` on apps/auth, exactly to the spec's contract, plus the definite-answer boot assertion and the alerts.
+
+#### Files to Create / Modify
+
+- `apps/auth/src/routes/whatsapp.ts` (new): the router.
+  1. Bearer → `verifyApiKey({ key, permissions: { whatsapp: ['mint'] } })`.
+  2. On `valid: false`, `checkApiKeyRelation` (a query on `auth.apikey`, success cached for `APIKEY_RELATION_CHECK_TTL`) → 401 or 500. A missing or malformed bearer → 401 with no database query.
+  3. `findServiceUser('whatsapp')`: not exactly one → 500 + alert; `referenceId` mismatch → 401.
+  4. Route-local `express.json({ limit: EXCHANGE_BODY_LIMIT })` after the key; sanity bounds → 400.
+  5. `resolveOrCreateWhatsappUser`.
+  6. `consumeWindow` on the pool, keyed `sub:<userId>|/api/whatsapp/session` → 429 with integer `X-Retry-After`.
+  7. `issueWhatsappToken` → 200, 403 or 500; a lock timeout → 500.
+
+  Every error logs `{name, code}` only. No response contains the bearer, BSUID, phone number or body.
+- `apps/auth/src/app.ts`: mount `app.use(WHATSAPP_SESSION_PATH, whatsappRouter(…))` **before** `app.use(corsFor(…))`, with a comment on why.
+- `apps/auth/src/boot.ts` (new) and `apps/auth/src/index.ts`: `assertSchema(db)` before `listen()`.
+  - Query `auth.apikey`: `42P01` → refuse.
+  - Catalog lookup for the constraint: empty → refuse.
+  - Any other error → log `{name, code}` and continue to `listen()`.
+- `apps/auth/src/alerts.ts`: per-key volume, `USAGE_EXCEEDED` and `RATE_LIMITED` (one per window each), 401 volume, eligibility (count) and service user missing. Each carries counts and windows only. The eligibility case also writes one `console.warn` with the user id (the apps/api "app row refused" precedent).
+- `packages/auth/src/limits.ts`: `APIKEY_RELATION_CHECK_TTL`, `EXCHANGE_BODY_LIMIT`, `WHATSAPP_EXCHANGE_KEY_ALERT`, `EXCHANGE_UNAUTHORIZED_ALERT`.
+- `apps/auth/src/alerts.ts` (where `Sentry.init` lives): a `beforeSend` scrub for the exchange path (no body, no `Authorization`).
+- Tests: `apps/auth/tests/whatsapp-session.test.ts` (new), `apps/auth/tests/boot.test.ts` (new), `apps/auth/tests/public-face.test.ts` (route inventory).
+
+#### Deliverables
+
+- [ ] Route, mounting, boot assertion, alerts and Sentry scrub.
+- [ ] Tests (HTTP through `startService`):
+  - every key refusal → the byte-identical 401 (missing, non-Bearer, empty, session token, JWT, unknown, disabled, expired, exhausted, rate-limited, `mcp` only, no permissions, another service's `whatsapp: mint` key);
+  - service user missing → 500 + alert;
+  - body cases → 400 after a valid key; a body with no key is never parsed (spy);
+  - happy path, repeat, 403 banned, 429 with integer `X-Retry-After`;
+  - the counter survives a 403 and a 500;
+  - another user is unaffected;
+  - a lock held from another connection → 500 within the timeout;
+  - CORS: no `Access-Control-*` on `POST` or `OPTIONS` for each `CORS_ORIGIN`, `null`, `https://evil.example` and no `Origin`; a middleware-order test pins the mount before `corsFor`;
+  - not reachable under `/api/auth/*`;
+  - `auth.apikey` dropped under the running service → 500 after the TTL elapses;
+  - log capture across all cases: no raw key, hash, session token, BSUID, phone number or driver error;
+  - a captured Sentry event has no body or `Authorization`;
+  - raw response bytes contain none of the request's sensitive values;
+  - alerts fire at their thresholds with counts only.
+- [ ] Boot tests:
+  - `42P01` → refuses to start with a `{name, code}` log;
+  - constraint missing → refuses;
+  - database unreachable → starts, `/health` reports down, and recovers when the database returns.
+- [ ] Production-shaped run (manual, recorded in the review): apps/auth with `NODE_ENV=production` against the Postgres 18 container; stop the container under the running service; after `APIKEY_RELATION_CHECK_TTL`, a valid key and an unknown key both get 500; restart the container and the exchange recovers.
+
+#### Acceptance Criteria
+
+- [ ] All suites pass. The public-face route inventory lists the new path. `ROUTER_RULES` are unchanged (all `false`).
+- [ ] The production-shaped run shows 500, never 401, after the TTL, and recovery.
+
+#### Test Plan
+
+HTTP integration against `startService` on pglite. Real Postgres for the outage and the lock timeout. Log, Sentry and response-byte capture as the spec requires.
+
+### Phase 7: End-to-end contract test, source scan and documentation
+
+**Dependencies**: Phase 6
+
+#### Objective
+
+Prove an exchange token works in apps/api unchanged, prove apps/api has no WhatsApp code, and give the operator and the consumer everything they need.
+
+#### Files to Create / Modify
+
+- `apps/api/tests/contract/whatsapp-exchange.test.ts` (new): start apps/auth through the existing harness, seed a service user and key, exchange a BSUID, and call an apps/api route with the token. `requireUser` passes, first-use `GET /api/account/me` runs, and a `public.users` row exists under the same UUID with `registered_via = 'whatsapp'`. The phone number is in no apps/api row or response.
+- `apps/api/tests/source-scan/` (existing scan module): a `whatsapp` scan over `apps/api/src/**` and `apps/api/lib/**` (tests excluded) that reports its hit count (0). Its negative tests: a known-bad fixture line under the scanned glob is caught, and a near miss outside it is not.
+- `docs/self-hosting.md`: the route, the scripts, `limits.ts` bounds, the migration-before-code order.
+- `docs/cutover/service-keys-runbook.md` (new):
+  - issuance;
+  - the handoff (straight into the consumer's Railway variable);
+  - rotation overlap and the doubled ceiling;
+  - revocation;
+  - pruning (none expected);
+  - the limit sizing formula and the values chosen;
+  - the pre-apply duplicate check for `(provider_id, account_id)`, with the ACCESS EXCLUSIVE lock note and quiet-window guidance;
+  - the alert meanings, and the eligibility repair procedure.
+- `codev/resources/arch.md` (Authentication & Authorization): service keys, the exchange, the noreply domain, and the alert posture.
+- `packages/auth/README.md`: the `apikey` table and migration `0001`.
+- Coordination (outside this repo's diff): the contract summary, sent to the #327 builder through the architect, with the spec 321 amendment on their branch: header, `phone_number`, error statuses, no per-message retry on 500, re-exchange once on an apps/api 401, and the staging smoke (5 messages within 1 s) recorded as a comment on PR #327.
+
+#### Deliverables
+
+- [ ] The end-to-end test, the source scan with its negative tests, and the four documents.
+- [ ] The contract summary sent.
+
+#### Acceptance Criteria
+
+- [ ] All suites pass, the root `turbo run test` included; the scan reports 0 hits plus its two negative results.
+- [ ] Documentation consistency tests (`self-hosting-docs.test.ts`, `cutover-docs.test.ts`) pass or are extended for the new content.
+- [ ] No new environment variable (checked by the four-way derivation); `turbo.json` is unchanged.
+
+#### Test Plan
+
+The contract test through the existing harness; scan negative tests; doc consistency tests.
+
+## Risks and Mitigation
+
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+| A probe contradicts the spec (e.g. `signJWT` overrides `exp`, `returned: false` leaks through an adapter path, the lock pattern waits) | Medium | High | Phase 1 runs every probe first; any difference stops the plan and goes to the security architect before phase 5 |
+| Migration numbering collides with the cutover | Medium | High | Message `architect:main` before committing the journal; rebase expected |
+| The legacy traffic data never arrives | Medium | Low | Formulas plus PROVISIONAL values; bounds wide enough to hold either outcome; the runbook records the values chosen |
+| The logger change alters an existing test's expectations | Low | Low | Its own commit; affected tests listed in the commit message |
+| Real-Postgres steps are manual, so they can be skipped | Medium | High | Their output is a review deliverable for phases 1, 5 and 6; the plan's acceptance criteria name them |
+| The rebase after the cutover reshapes `index.ts`, `app.ts` or `limits.ts` | High | Low | Tests pin behaviour, not line positions |
+| The plugin's 7/5 shape changes on a future bump | Low | Medium | Both counts asserted; the prefix rule covers any new routed path anyway |
+
+## Documentation Updates
+
+- `docs/self-hosting.md`, `docs/cutover/service-keys-runbook.md` (new), `codev/resources/arch.md` (Authentication & Authorization), `packages/auth/README.md`.
+- `codev/resources/lessons-learned.md`, at review time: plugin behaviours (deletion on no-refill exhaustion, outage reported as `INVALID_API_KEY`, `signJWT` without `iat`), and the `FOR UPDATE` versus `KEY SHARE` hazard.
+- Spec 321's amendment lands on PR #327's branch, coordinated with its builder.

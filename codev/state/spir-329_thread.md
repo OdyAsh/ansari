@@ -47,3 +47,12 @@
 - Round 2 fixes: exchange mounted before corsFor; boot assertion only on definite 42P01/missing constraint (unreachable DB still starts);
   consumeWindow on the pool outside the tx (else refusals roll it back); explicit iat/exp to signJWT (signJWT omits iat otherwise);
   7 endpoints / 5 routed (serverOnly have no path); lock/statement timeouts; alerts counts-only, user id in log line.
+
+## 2026-10-28: plan drafted
+
+- Seven phases: (1) plugin, schema, migration 0001 and the blocked surface, plus probes (the plugin and its route block share one commit, so no commit exposes /api-key/*);
+  (2) redacted logger as its own commit; (3) noreply domain; (4) operator scripts; (5) identity and session core in packages/auth;
+  (6) route, boot assertion, alerts; (7) e2e, source scan, docs.
+- Decision 3: formulas in P/D/U/N (legacy peak msg/min, daily msgs, DAU, instances), PROVISIONAL values, wide create-script bounds; the data was requested from the owner.
+- No committed real-Postgres test infra exists (spec 300's Docker boot test was a manual run), so probe 4 and the outage run are manual against postgres:18, with output in the review.
+- auth-journal-parity asserts a "single 0000" journal and schema tests assert six tables; both change in phase 1. AUTH_DEPLOYED_THROUGH stays main's.
