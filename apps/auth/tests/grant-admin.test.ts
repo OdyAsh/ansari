@@ -167,6 +167,24 @@ describe('grant-admin.ts', () => {
     }
   });
 
+  // Demotion only lowers a role, so it is not refused: it is the runbook's repair
+  // for a WhatsApp user found holding `admin` (eligibility reason `admin`).
+  it('revokes a noreply user seeded as admin, and still refuses to grant it (spec 329)', async () => {
+    const email = 'whatsapp-seeded-admin@noreply.askansari.ai';
+    const { rows } = await service.client.query<{ id: string }>(
+      `insert into auth.users (name, email, registered_via, role) values ('x', $1, 'whatsapp', 'admin') returning id`,
+      [email]
+    );
+    await expect(runGrantAdmin(service.db, { kind: 'grant', email, confirmId: rows[0]!.id })).rejects.toBeInstanceOf(
+      NoreplyAddressError
+    );
+    await runGrantAdmin(service.db, { kind: 'revoke', email });
+    const after = await service.client.query<{ role: string | null }>('select role from auth.users where id = $1', [
+      rows[0]!.id,
+    ]);
+    expect(after.rows[0]?.role).toBe('user');
+  });
+
   it('revokes back to role user', async () => {
     const email = nextEmail('revoke');
     await signUpTokens(service, email);

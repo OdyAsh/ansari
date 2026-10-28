@@ -17,9 +17,10 @@
  * the person they mean, and only `--confirm <that id>` grants. An id that is not
  * the account the email resolves to grants nothing; the show step exits 2, so
  * a script that forgets --confirm stops. It warns on a recent or unverified
- * account (the squat signatures), never creates one, and refuses the system
- * domain and the noreply domain (spec 329). A demotion takes effect at
- * once: apps/api asks for the role on each admin request.
+ * account (the squat signatures), never creates one, and never grants to the
+ * system domain or the noreply domain (spec 329). `--revoke` is not refused: a
+ * demotion only lowers a role, and it is the runbook's repair for a WhatsApp
+ * user found holding `admin`. A demotion takes effect at once: apps/api asks for the role on each admin request.
  */
 import 'dotenv/config';
 import { createDb, isNoreplyAddress, isSystemAddress, normalizeEmail, users, type Db } from '@ansari/auth';

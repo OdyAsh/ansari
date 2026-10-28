@@ -23,7 +23,7 @@ Owner phase per the plan's criterion table. Where the plan named a test, that te
 - [x] Rotate leaves two live keys; revoke sets `enabled = false`, keeps the row, and the key then gets the 401 (Phase 4, Phase 6)
 - [x] Sentry event per write with no key material; a failed flush keeps the write, prints the banner and exits 3 (Phase 4; breadcrumb leak found and closed in review iteration 2)
 - [x] Refilled exhaustion refuses and keeps the key, then verifies after the interval (Phase 1)
-- [x] `grant-admin.ts` refuses noreply (Phase 3)
+- [x] `grant-admin.ts` never grants to a noreply address, as for the system domain; `--revoke` stays allowed (the repair for a promoted WhatsApp user), pinned in the PR review (Phase 3, PR review iteration 1)
 
 **Exchange: key refusals**
 - [x] Every listed key state answers the identical 401 and creates no row: no header (zero queries), non-Bearer, empty, a session token, a JWT, unknown, revoked, expired, exhausted, rate-limited, `mcp: complete`, no permissions, mis-owned (Phase 6)
@@ -173,6 +173,12 @@ Round 2: Codex APPROVE.
 - **Concern**: the docs named `WHATSAPP_KEY_BOUNDS` without its ranges → **Addressed**: both docs state the ranges; the tests compute them from the constant; a negative run turns 2 red.
 
 Round 2: Codex APPROVE.
+
+### PR review (Round 1)
+
+#### Codex (REQUEST_CHANGES)
+- **Concern**: merge is blocked because `AUTH_DEPLOYED_THROUGH` is `null`, there is no `0001` apply record, and staging is unverified → **Rebutted**: this is the agreed merge precondition, done at the rebase after spec 300's cutover. Bumping now would assert an apply that has not happened. It is stated in the PR body and the runbook.
+- **Concern**: `grant-admin --revoke` on a noreply address bypasses the reserved-domain check → **Addressed** (docs) and **Rebutted** (code). A demotion only lowers a role, it is the runbook's repair for a promoted WhatsApp user, and the system domain has never been refused on revoke either. The overclaiming wording in `arch.md`, `RELEASE.md` and the script header is narrowed to "never grants". A regression test pins grant-refused and revoke-allowed, and goes red under the suggested change.
 
 ## Lessons Learned
 

@@ -187,7 +187,7 @@ it stays so until repaired.
    ```
 
 3. Repair the one thing `reason` names: `accounts`, delete the stray (non-`whatsapp`) account
-   row; `admin`, set the role back to `user`; `address` or `registered_via`, correct it. If you cannot tell how the
+   row; `admin`, set the role back to `user` with `grant-admin.ts --revoke <email>`; `address` or `registered_via`, correct it. If you cannot tell how the
    row came to be, delete the user (`delete from auth.users where id = '<user id>'`; its sessions
    and accounts cascade): the next message recreates them as a new user. Their app data in
    apps/api stays under the old id, so prefer a targeted repair.
