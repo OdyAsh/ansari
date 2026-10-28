@@ -22,3 +22,13 @@ it("an event raised inside a request with a bearer carries no Authorization head
   }
   expect(leaked).toEqual([]);
 });
+
+it("leaves Sentry's data collection at its private defaults", () => {
+  const resolved = Sentry.getClient()?.getDataCollectionOptions();
+  expect(resolved).toMatchObject({
+    userInfo: false,
+    httpBodies: [],
+    genAI: { inputs: false, outputs: false },
+    databaseQueryData: false,
+  });
+});

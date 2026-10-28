@@ -1,33 +1,50 @@
 import type { Event, NodeOptions } from "@sentry/nextjs";
 
+const CREDENTIAL_HEADERS = new Set(["authorization", "cookie"]);
+// @sentry/nextjs copies headers onto the root span as attributes
+// (`http.request.header.cookie.<name>`, dashes as underscores), masking only
+// sensitive-looking names.
+const CREDENTIAL_ATTRIBUTE =
+  /^http\.(request\.header\.(authorization|cookie)|response\.header\.set_cookie)(\.|$)/;
+
+function dropCredentialAttributes(data: Record<string, unknown> | undefined): void {
+  if (!data) return;
+  for (const key of Object.keys(data)) {
+    if (CREDENTIAL_ATTRIBUTE.test(key)) delete data[key];
+  }
+}
+
 /**
  * Sentry's request-data integration attaches the in-flight request to every
  * event raised while it is handled. Strip what can carry user content or a
  * credential: the body (user messages), the Authorization header (the user's
- * JWT) and cookies (issue #333). Node lowercases incoming header names, but a
- * header object built elsewhere may not, so names are matched case-blind.
+ * JWT) and cookies, from the request and from span attributes (issue #333).
+ * Node lowercases incoming header names, but a header object built elsewhere
+ * may not, so names are matched case-blind.
  */
 export function scrubRequestEvent<E extends Event>(event: E): E {
   const request = event.request;
-  if (!request) return event;
-  delete request.data;
-  delete request.cookies;
-  if (request.headers) {
-    for (const name of Object.keys(request.headers)) {
-      const lower = name.toLowerCase();
-      if (lower === "authorization" || lower === "cookie") delete request.headers[name];
+  if (request) {
+    delete request.data;
+    delete request.cookies;
+    if (request.headers) {
+      for (const name of Object.keys(request.headers)) {
+        if (CREDENTIAL_HEADERS.has(name.toLowerCase())) delete request.headers[name];
+      }
     }
   }
+  dropCredentialAttributes(event.contexts?.trace?.data);
+  for (const span of event.spans ?? []) dropCredentialAttributes(span.data);
   return event;
 }
 
 /**
  * The server's request-privacy options; tests spread exactly these. Transactions
- * carry the request too, and @sentry/nextjs copies each cookie onto the root
- * span as an attribute unless cookie collection is off.
+ * carry the request too. Never set `dataCollection` partially here: any value
+ * switches every category it omits to collect-all (user info, bodies, GenAI
+ * inputs and outputs, database query data).
  */
 export const SENTRY_REQUEST_PRIVACY = {
-  dataCollection: { cookies: false },
   beforeSend: scrubRequestEvent,
   beforeSendTransaction: scrubRequestEvent,
 } satisfies NodeOptions;
