@@ -219,7 +219,7 @@ describe('canonicalPath', () => {
       for (const target of [
         `http://localhost:${port}/api/auth/admin/list-users`,
         `http://localhost:${port}/api/auth/change-password`,
-        `http://localhost:${port}/api/auth/api-key/create`,
+        ...API_KEY_PATHS.map((path) => `http://localhost:${port}/api/auth${path}`),
         `http://localhost:${port}/api/auth/API-KEY/list`,
       ]) {
         const status = await new Promise<number>((resolve, reject) => {

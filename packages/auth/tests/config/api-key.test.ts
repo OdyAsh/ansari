@@ -134,16 +134,30 @@ describe('probe 1b: limits changed on a live key', () => {
         keyId: created.id,
         userId,
         rateLimitMax: 5,
-        rateLimitTimeWindow: 60_000,
-        remaining: 100,
-        refillAmount: 100,
-        refillInterval: 86_400_000,
+        rateLimitTimeWindow: 30_000,
+        remaining: 1,
+        refillAmount: 2,
+        refillInterval: 1000,
       },
     });
     const row = await keyRow(created.id);
     expect(row!.rate_limit_max).toBe(5);
-    expect(row!.refill_amount).toBe(100);
+    expect(row!.rate_limit_time_window).toBe(30_000);
+    expect(row!.refill_amount).toBe(2);
+    expect(row!.refill_interval).toBe(1000);
+    expect(row!.remaining).toBe(1);
+
+    // The new window cap is enforced: the key verifies again at once.
     expect((await verify(created.key)).valid).toBe(true);
+    // The new budget is enforced: remaining 1 is now spent.
+    expect((await verify(created.key)).error?.code).toBe('USAGE_EXCEEDED');
+    // The new refill applies: past the 1 s interval, remaining is refilled to 2 (one spent now).
+    await client.query(
+      `UPDATE auth.apikey SET created_at = now() - interval '1 hour', last_refill_at = NULL WHERE id = $1`,
+      [created.id]
+    );
+    expect((await verify(created.key)).valid).toBe(true);
+    expect((await keyRow(created.id))!.remaining).toBe(1);
   });
 });
 
