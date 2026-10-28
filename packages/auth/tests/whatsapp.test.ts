@@ -398,11 +398,24 @@ describe('eligibility: a row a person could not have made → ineligible, no tok
     const { userId, bsuid } = await exchange();
     await client.query(`UPDATE auth.users SET role = 'admin' WHERE id = $1`, [userId]);
     const outcome = await issueWhatsappToken(auth, db, { userId, bsuid, phone: null });
-    expect(outcome).toEqual({ kind: 'ineligible', reason: 'admin' });
+    expect(outcome).toEqual({ kind: 'ineligible', reason: 'role' });
 
     const fresh = await resolved();
     await client.query(`UPDATE auth.users SET role = 'admin' WHERE id = $1`, [fresh.userId]);
-    await expectIneligible(fresh.userId, fresh.bsuid, 'admin');
+    await expectIneligible(fresh.userId, fresh.bsuid, 'role');
+  });
+
+  // An allowlist, not `role === 'admin'`: the admin plugin reads `user,admin` as admin.
+  it.each(['user,admin', 'admin,user', 'moderator', 'User', ''])('any role but exactly user (%j)', async (role) => {
+    const { userId, bsuid } = await resolved();
+    await client.query(`UPDATE auth.users SET role = $1 WHERE id = $2`, [role, userId]);
+    await expectIneligible(userId, bsuid, 'role');
+  });
+
+  it('a null role', async () => {
+    const { userId, bsuid } = await resolved();
+    await client.query(`UPDATE auth.users SET role = NULL WHERE id = $1`, [userId]);
+    await expectIneligible(userId, bsuid, 'role');
   });
 
   it('an altered address', async () => {

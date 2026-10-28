@@ -277,7 +277,8 @@ describe('every subcommand', () => {
         const userId = await createService();
         const { id } = await createKey();
         argv = argv.map((a) => (a === KEY_ID ? id : a));
-        if (name !== 'list') argv = [...argv, '--confirm', userId];
+        // update-limits and revoke confirm with the key's id; the other writes with the user's.
+        if (name !== 'list') argv = [...argv, '--confirm', name === 'update-limits' || name === 'revoke' ? id : userId];
       } else {
         argv = [...argv, '--confirm', 'whatsapp'];
       }
@@ -315,11 +316,80 @@ describe('every subcommand', () => {
         : name === 'update-limits'
           ? ['update-limits', 'whatsapp', '--key', first.id, ...LIMIT_FLAGS]
           : ['revoke', 'whatsapp', '--key', first.id];
-    const { text, exitCode } = await run([...argv, '--confirm', userId]);
+    const confirm = name === 'rotate' ? userId : first.id;
+    const { text, exitCode } = await run([...argv, '--confirm', confirm]);
     expect(exitCode).toBe(0);
     expect(text).toContain(first.id);
     if (name === 'rotate') expect(text).toMatch(/Created key [0-9a-f-]{36}/);
   });
+});
+
+describe('confirm binding and labels (security PR gate, pass 1)', () => {
+  it.each(['update-limits', 'revoke'])(
+    "%s confirms with the KEY's id: the service user's id, or another key's id, writes nothing",
+    async (name) => {
+      const userId = await createService();
+      const target = await createKey();
+      const other = await createKey('rotate');
+      const argv =
+        name === 'update-limits'
+          ? ['update-limits', 'whatsapp', '--key', target.id, '--rate-max', '1', '--rate-window', '30', '--daily', '500']
+          : ['revoke', 'whatsapp', '--key', target.id];
+      const shown = await run(argv);
+      expect(shown.text).toContain(`--confirm ${target.id}`);
+      const before = await keyRow(target.id);
+      for (const confirm of [userId, other.id]) {
+        const result = await run([...argv, '--confirm', confirm]);
+        expect(result.exitCode, result.text).toBe(EXIT_NOTHING_WRITTEN);
+        expect(result.text).toMatch(/not this key's id/);
+      }
+      expect(await keyRow(target.id)).toEqual(before);
+      expect((await run([...argv, '--confirm', target.id])).exitCode).toBe(0);
+    }
+  );
+
+  it('rotate prints revoke commands confirmed by each old key id', async () => {
+    const userId = await createService();
+    const old = await createKey();
+    const { text } = await run(['rotate', 'whatsapp', ...LIMIT_FLAGS, '--confirm', userId]);
+    expect(text).toContain(`revoke whatsapp --key ${old.id} --confirm ${old.id}`);
+  });
+
+  const KEY = `wa_${'Q'.repeat(64)}`;
+  it.each([
+    ['a full key', KEY],
+    ['a key without its prefix', 'Q'.repeat(64)],
+    ['a truncated key', KEY.slice(0, 40)],
+    ["another service's prefix", 'amcp_partner'],
+    ['a newline', 'wa main\ninjected line'],
+    ['a carriage return', 'wa main\rx'],
+    ['a tab', 'wa\tmain'],
+    ['a quote', "wa o'main"],
+    ['65 characters', 'a'.repeat(65)],
+    ['a zero-width space', '\u200b'],
+  ])('--name and --client-id refuse %s, without echoing it', async (_case, value) => {
+    const userId = await createService();
+    for (const flag of ['--name', '--client-id']) {
+      const before = await rowCounts();
+      const recorder = memoryRecorder();
+      const result = await run(['create-key', 'whatsapp', ...LIMIT_FLAGS, flag, value, '--confirm', userId], { recorder });
+      expect(result.exitCode, result.text).toBe(1);
+      expect(result.text).toContain(flag);
+      expect(result.text).not.toContain(value);
+      expect(await rowCounts()).toEqual(before);
+      expect(recorder.events).toEqual([]);
+    }
+  });
+
+  it.each([['wa main'], ['partner-1.prod_2'], [`${'x'.repeat(31)} ${'y'.repeat(31)}`], ['a'.repeat(31)]])(
+    '--name and --client-id accept an inert label (%s)',
+    (value) => {
+      expect(parseArgs(['create-key', 'whatsapp', ...LIMIT_FLAGS, '--name', value, '--client-id', value])).toMatchObject({
+        name: value,
+        clientId: value,
+      });
+    }
+  );
 });
 
 describe('create-service', () => {
@@ -417,11 +487,11 @@ describe('create-service', () => {
 describe('create-key', () => {
   it('shows the service user and the limits, writes nothing and exits 2', async () => {
     const userId = await createService();
-    const { exitCode, text } = await run(['create-key', 'whatsapp', ...LIMIT_FLAGS, '--name', "wa o'main"]);
+    const { exitCode, text } = await run(['create-key', 'whatsapp', ...LIMIT_FLAGS, '--name', 'wa main']);
     expect(exitCode).toBe(EXIT_NOTHING_WRITTEN);
     expect(text).toContain(`id          ${userId}`);
     expect(text).toContain('60 per 60 s; budget 3000 per 24 h');
-    expect(text).toContain(`--name 'wa o'\\''main' --confirm ${userId}`);
+    expect(text).toContain(`--name 'wa main' --confirm ${userId}`);
     expect((await rowCounts())?.keys).toBe(0);
   });
 
@@ -535,9 +605,9 @@ describe('revoke', () => {
   });
 
   it('sets enabled = false and keeps the row; the key no longer verifies; prints the id, no key', async () => {
-    const userId = await createService();
+    await createService();
     const { id, key } = await createKey();
-    const { exitCode, text } = await run(['revoke', 'whatsapp', '--key', id, '--confirm', userId]);
+    const { exitCode, text } = await run(['revoke', 'whatsapp', '--key', id, '--confirm', id]);
     expect(exitCode).toBe(0);
     expect(text).toContain(`Revoked key ${id}`);
     expect(text).toContain('enabled = false');
@@ -551,10 +621,10 @@ describe('revoke', () => {
   });
 
   it("refuses a key that is not the service's", async () => {
-    const userId = await createService();
+    await createService();
     await createService('ansari-mcp');
     const mcp = await createKey('create-key', LIMIT_FLAGS, 'ansari-mcp');
-    const { exitCode, text } = await run(['revoke', 'whatsapp', '--key', mcp.id, '--confirm', userId]);
+    const { exitCode, text } = await run(['revoke', 'whatsapp', '--key', mcp.id, '--confirm', mcp.id]);
     expect(exitCode).toBe(1);
     expect(text).toMatch(/not a key of this service/);
     expect((await keyRow(mcp.id))!.enabled).toBe(true);
@@ -563,10 +633,10 @@ describe('revoke', () => {
 
 describe('update-limits', () => {
   it('writes the new values, enforced at the next verify', async () => {
-    const userId = await createService();
+    await createService();
     const { id, key } = await createKey();
     const { exitCode, text } = await run([
-      'update-limits', 'whatsapp', '--key', id, '--rate-max', '1', '--rate-window', '30', '--daily', '500', '--confirm', userId,
+      'update-limits', 'whatsapp', '--key', id, '--rate-max', '1', '--rate-window', '30', '--daily', '500', '--confirm', id,
     ]);
     expect(exitCode, text).toBe(0);
     expect(text).toContain(`Updated key ${id}`);
@@ -585,7 +655,7 @@ describe('update-limits', () => {
   });
 
   it('refuses out-of-bounds values and writes nothing', async () => {
-    const userId = await createService();
+    await createService();
     const { id } = await createKey();
     const before = await keyRow(id);
     for (const flags of [
@@ -593,7 +663,7 @@ describe('update-limits', () => {
       ['--rate-max', '10', '--rate-window', '86401', '--daily', '10'],
       ['--rate-max', '10', '--rate-window', '60', '--daily', '10000001'],
     ]) {
-      const { exitCode, text } = await run(['update-limits', 'whatsapp', '--key', id, ...flags, '--confirm', userId]);
+      const { exitCode, text } = await run(['update-limits', 'whatsapp', '--key', id, ...flags, '--confirm', id]);
       expect(exitCode).toBe(1);
       expect(text).toMatch(/Out of bounds/);
     }
@@ -676,8 +746,8 @@ describe('the durable record', () => {
     });
     const key2 = rotated.lines.find((l) => l.startsWith('wa_'))!;
     const id2 = /Created key ([0-9a-f-]{36})/.exec(rotated.text)![1]!;
-    await run(['update-limits', 'whatsapp', '--key', id2, ...LIMIT_FLAGS, '--confirm', userId], { recorder: sentryRecorder });
-    await run(['revoke', 'whatsapp', '--key', id1, '--confirm', userId], { recorder: sentryRecorder });
+    await run(['update-limits', 'whatsapp', '--key', id2, ...LIMIT_FLAGS, '--confirm', id2], { recorder: sentryRecorder });
+    await run(['revoke', 'whatsapp', '--key', id1, '--confirm', id1], { recorder: sentryRecorder });
     await run(['list', 'whatsapp'], { recorder: sentryRecorder });
 
     expect(envelopes).toHaveLength(4);
@@ -703,14 +773,15 @@ describe('the durable record', () => {
   });
 
   it('awaits the flush before it returns', async () => {
-    const userId = await createService();
+    await createService();
     let release!: (ok: boolean) => void;
     const recorder: Recorder = {
       capture: () => {},
       flush: () => new Promise<boolean>((resolve) => (release = resolve)),
     };
     let settled = false;
-    const pending = run(['revoke', 'whatsapp', '--key', (await createKey()).id, '--confirm', userId], { recorder }).then((r) => {
+    const { id } = await createKey();
+    const pending = run(['revoke', 'whatsapp', '--key', id, '--confirm', id], { recorder }).then((r) => {
       settled = true;
       return r;
     });
@@ -742,11 +813,10 @@ describe('the durable record', () => {
   });
 
   it('a recorder that reports an unsent flush is a failure too', async () => {
-    const userId = await createService();
+    await createService();
     const recorder = memoryRecorder(false);
-    const { exitCode, text } = await run(['revoke', 'whatsapp', '--key', (await createKey()).id, '--confirm', userId], {
-      recorder,
-    });
+    const { id } = await createKey();
+    const { exitCode, text } = await run(['revoke', 'whatsapp', '--key', id, '--confirm', id], { recorder });
     expect(recorder.flushes).toBe(1);
     expect(exitCode).toBe(EXIT_UNRECORDED);
     expect(text).toMatch(/NOT SENT/);

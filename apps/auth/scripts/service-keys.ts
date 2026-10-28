@@ -12,14 +12,18 @@
  *   tsx scripts/service-keys.ts list <service>
  *   tsx scripts/service-keys.ts rotate <service> (the create-key flags)
  *   tsx scripts/service-keys.ts update-limits <service> --key <key id> --rate-max <n> --rate-window <seconds>
- *                                             --daily <n> [--confirm <user id>]
- *   tsx scripts/service-keys.ts revoke <service> --key <key id> [--confirm <user id>]
+ *                                             --daily <n> [--confirm <key id>]
+ *   tsx scripts/service-keys.ts revoke <service> --key <key id> [--confirm <key id>]
  *
  * Every write is two steps, as in grant-admin.ts: without `--confirm` the
  * script shows the service user and what it would do, writes nothing and
- * exits 2; only `--confirm <the service user's id>` writes (for
- * create-service, which has no user yet, `--confirm <the service name>`). A
- * mismatch writes nothing and exits 2.
+ * exits 2; only `--confirm <the id shown>` writes: the service user's id for
+ * create-key and rotate, the KEY's id for update-limits and revoke (so a
+ * confirm copied from another key's show step never writes), and the service
+ * name for create-service, which has no user yet. A mismatch writes nothing
+ * and exits 2. `--name` and `--client-id` take 1 to 64 letters, digits,
+ * spaces, dots, underscores and hyphens, and never a key-shaped value: both
+ * are printed by list and sent to Sentry.
  *
  * - It prints the database as `hostname:port` only, never the URL.
  * - Permissions and the key prefix are fixed per service (SERVICES); limits are
@@ -30,8 +34,9 @@
  * - The raw key is printed once, by create-key or rotate; nothing else prints
  *   a key or a hash. Revoke sets `enabled = false` and keeps the row.
  * - Every write sends one Sentry event (action, service, ids, name; no key
- *   material). If it cannot be flushed, the write stands, a banner asks for
- *   the runbook's key log, and the script exits 3.
+ *   material). If it cannot be flushed, or `SENTRY_DSN` is not set (nothing is
+ *   attempted then), the write stands, a banner asks for the runbook's key
+ *   log, and the script exits 3.
  */
 import 'dotenv/config';
 import * as Sentry from '@sentry/node';
@@ -67,8 +72,8 @@ export const USAGE = [
   '       tsx scripts/service-keys.ts create-key <service> --rate-max <n> --rate-window <seconds> --daily <n> [--name <text>] [--client-id <text>] [--confirm <user id>]',
   '       tsx scripts/service-keys.ts list <service>',
   '       tsx scripts/service-keys.ts rotate <service> --rate-max <n> --rate-window <seconds> --daily <n> [--name <text>] [--client-id <text>] [--confirm <user id>]',
-  '       tsx scripts/service-keys.ts update-limits <service> --key <key id> --rate-max <n> --rate-window <seconds> --daily <n> [--confirm <user id>]',
-  '       tsx scripts/service-keys.ts revoke <service> --key <key id> [--confirm <user id>]',
+  '       tsx scripts/service-keys.ts update-limits <service> --key <key id> --rate-max <n> --rate-window <seconds> --daily <n> [--confirm <key id>]',
+  '       tsx scripts/service-keys.ts revoke <service> --key <key id> [--confirm <key id>]',
   `Services: ${Object.keys(serviceUsers.SERVICES).join(', ')}`,
 ].join('\n');
 
@@ -135,6 +140,30 @@ function limitsFrom(flags: Map<string, string>): KeyLimits {
 }
 
 /** Parses the command line; throws RefusedError with the reason when it is not a valid command. */
+/** A key name or client id: printed by list and sent to Sentry, so a bounded, inert charset. */
+const LABEL = /^[A-Za-z0-9 ._-]{1,64}$/;
+
+/**
+ * `--name` / `--client-id`, refused unless inert. A raw key pasted into the
+ * wrong flag would be printed by list and sent to Sentry, so anything that
+ * holds a service's key prefix, or a run of 32 letters (a key body), is refused.
+ * The value is never echoed back.
+ */
+function label(flag: string, value: string | undefined): string | null {
+  if (value === undefined) return null;
+  if (!LABEL.test(value)) {
+    throw new RefusedError(`${flag} takes 1 to 64 letters, digits, spaces, dots, underscores and hyphens.`);
+  }
+  const lower = value.toLowerCase();
+  const keyShaped =
+    Object.values(serviceUsers.SERVICES).some((s) => lower.includes(s.prefix)) ||
+    Object.values(serviceUsers.SECRET_SCANNING_PATTERNS).some((p) => new RegExp(p.source).test(value)) ||
+    // A key's 64-letter body pasted without its prefix.
+    /[A-Za-z]{32}/.test(value);
+  if (keyShaped) throw new RefusedError(`${flag} looks like a key. Never paste a key into a flag; nothing was written.`);
+  return value;
+}
+
 export function parseArgs(argv: readonly string[]): ServiceKeysCommand {
   const [kind, service, ...rest] = argv;
   if (!isKind(kind) || service === undefined || service.startsWith('--')) throw new RefusedError(USAGE);
@@ -172,8 +201,8 @@ export function parseArgs(argv: readonly string[]): ServiceKeysCommand {
         service,
         confirm,
         limits: limitsFrom(flags),
-        name: flags.get('--name') ?? null,
-        clientId: flags.get('--client-id') ?? null,
+        name: label('--name', flags.get('--name')),
+        clientId: label('--client-id', flags.get('--client-id')),
       };
     case 'update-limits':
       return { kind, service, keyId: keyId(), limits: limitsFrom(flags), confirm };
@@ -386,7 +415,7 @@ export async function runServiceKeys(ctx: ScriptContext, cmd: ServiceKeysCommand
         ? [
             `Old live key(s): ${live.map((k) => k.id).join(', ')}`,
             'Once the consumer runs on the new key, revoke each old one:',
-            ...live.map((k) => command(`revoke ${cmd.service} --key ${k.id} --confirm ${user.id}`)),
+            ...live.map((k) => command(`revoke ${cmd.service} --key ${k.id} --confirm ${k.id}`)),
             'Until then both keys are live and the daily budget is doubled; keep the overlap short.',
           ]
         : [];
@@ -410,10 +439,10 @@ export async function runServiceKeys(ctx: ScriptContext, cmd: ServiceKeysCommand
         ...keyLines(key),
         `This would set ${describeLimits(checked)}, and today's remaining budget to ${checked.refillAmount}.`,
         'Nothing was written. To apply it, run:',
-        command(`update-limits ${cmd.service} --key ${key.id} ${flagsText(checked)} --confirm ${user.id}`),
+        command(`update-limits ${cmd.service} --key ${key.id} ${flagsText(checked)} --confirm ${key.id}`),
       ]);
     }
-    if (cmd.confirm !== user.id) return mismatch(`this service user's id`);
+    if (cmd.confirm !== key.id) return mismatch(`this key's id`);
     // The new budget starts now: `remaining` is set to it with the refill.
     await ctx.auth.api.updateApiKey({
       body: { keyId: key.id, userId: user.id, ...checked, remaining: checked.refillAmount },
@@ -431,10 +460,10 @@ export async function runServiceKeys(ctx: ScriptContext, cmd: ServiceKeysCommand
       ...keyLines(key),
       'This would revoke the key (enabled = false; the row is kept).',
       'Nothing was written. To revoke it, run:',
-      command(`revoke ${cmd.service} --key ${key.id} --confirm ${user.id}`),
+      command(`revoke ${cmd.service} --key ${key.id} --confirm ${key.id}`),
     ]);
   }
-  if (cmd.confirm !== user.id) return mismatch(`this service user's id`);
+  if (cmd.confirm !== key.id) return mismatch(`this key's id`);
   await ctx.auth.api.updateApiKey({ body: { keyId: key.id, userId: user.id, enabled: false } });
   return {
     lines: [`Revoked key ${key.id} (${key.name ?? ''}): enabled = false; the row is kept.`],
@@ -448,6 +477,8 @@ export type Recorder = {
   capture: (event: KeyEvent) => void;
   /** True when every captured event was sent within the timeout. */
   flush: (timeoutMs: number) => Promise<boolean>;
+  /** Why nothing can be recorded, when that is known up front (printed in the banner). */
+  reason?: string;
 };
 
 export const KEY_EVENT_MESSAGE = 'auth: service key operator action';
@@ -469,11 +500,30 @@ export const sentryRecorder: Recorder = {
   },
 };
 
-function unrecordedBanner(events: KeyEvent[]): string[] {
+/**
+ * No `SENTRY_DSN`: nothing is captured or flushed, on purpose, and every
+ * write takes the unrecorded path (banner, key log, exit 3). It does not rely
+ * on an uninitialised Sentry's flush happening to answer false.
+ */
+export const unrecordedRecorder: Recorder = {
+  capture() {},
+  flush: async () => false,
+  reason: 'SENTRY_DSN is not set: no record was attempted.',
+};
+
+/** The script's recorder: Sentry when a DSN is set (initialised here), otherwise none. */
+export function scriptRecorder(dsn: string | undefined): Recorder {
+  if (!dsn) return unrecordedRecorder;
+  Sentry.init({ dsn, environment: process.env.NODE_ENV ?? 'development', ...SCRIPT_SENTRY_OPTIONS });
+  return sentryRecorder;
+}
+
+function unrecordedBanner(events: KeyEvent[], reason: string | undefined): string[] {
   const bar = '!'.repeat(72);
   return [
     bar,
     '!! THE SENTRY RECORD OF THIS ACTION WAS NOT SENT. THE WRITE ABOVE STANDS.',
+    ...(reason ? [`!! ${reason}`] : []),
     "!! Record it by hand in the runbook's key log now:",
     ...events.map(
       (e) => `!!   action ${e.action}, service ${e.service}, user ${e.userId}, key ${e.keyId ?? '-'}, name ${e.name ?? '-'}`
@@ -535,7 +585,7 @@ export async function serviceKeys(argv: readonly string[], deps: ScriptDeps): Pr
   if (await deps.recorder.flush(deps.flushTimeoutMs ?? SENTRY_FLUSH_TIMEOUT_MS)) {
     return { lines, exitCode: result.exitCode };
   }
-  emit(...unrecordedBanner(result.events));
+  emit(...unrecordedBanner(result.events, deps.recorder.reason));
   return { lines, exitCode: EXIT_UNRECORDED };
 }
 
@@ -560,8 +610,7 @@ export function printLine(line: string): void {
 }
 
 async function main(): Promise<void> {
-  const dsn = process.env.SENTRY_DSN;
-  if (dsn) Sentry.init({ dsn, environment: process.env.NODE_ENV ?? 'development', ...SCRIPT_SENTRY_OPTIONS });
+  const recorder = scriptRecorder(process.env.SENTRY_DSN);
   const { exitCode } = await serviceKeys(process.argv.slice(2), {
     databaseUrl: process.env.DATABASE_URL,
     connect: () => {
@@ -574,7 +623,7 @@ async function main(): Promise<void> {
       const db = createDb();
       return { db, auth: createAuth(db) };
     },
-    recorder: sentryRecorder,
+    recorder,
     print: printLine,
   });
   process.exit(exitCode);

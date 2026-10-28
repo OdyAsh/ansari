@@ -64,11 +64,11 @@ async function main(): Promise<void> {
   const first = idIn(await step(['create-key', 'whatsapp', ...LIMITS, '--client-id', 'whatsapp-service', '--confirm', userId]), /^Created key ([0-9a-f-]{36})/);
   await step(['list', 'whatsapp']);
   await step(['rotate', 'whatsapp', ...LIMITS, '--confirm', userId]);
-  await step(['update-limits', 'whatsapp', '--key', first, '--rate-max', '120', '--rate-window', '60', '--daily', '6000', '--confirm', userId]);
-  await step(['update-limits', 'whatsapp', '--key', first, '--rate-max', '100001', '--rate-window', '60', '--daily', '6000', '--confirm', userId]);
+  await step(['update-limits', 'whatsapp', '--key', first, '--rate-max', '120', '--rate-window', '60', '--daily', '6000', '--confirm', first]);
+  await step(['update-limits', 'whatsapp', '--key', first, '--rate-max', '100001', '--rate-window', '60', '--daily', '6000', '--confirm', first]);
   await step(['create-key', 'whatsapp', ...LIMITS, '--expires-in', '86400', '--confirm', userId]);
   await step(['revoke', 'whatsapp', '--key', first]);
-  await step(['revoke', 'whatsapp', '--key', first, '--confirm', userId]);
+  await step(['revoke', 'whatsapp', '--key', first, '--confirm', first]);
   await step(['list', 'whatsapp']);
   await client.close();
 

@@ -28,7 +28,7 @@ import { JWT_LIFETIME_SECONDS, SESSION_LIFETIME_SECONDS } from './lifetimes';
 import { EXCHANGE_LOCK_TIMEOUT, EXCHANGE_STATEMENT_TIMEOUT, SESSION_MARGIN } from './limits';
 import { whatsappAddress } from './reserved';
 import { account, session, users } from './schema';
-import { ADMIN_ROLE, isBanned, USER_ROLE } from './users';
+import { isBanned, USER_ROLE } from './users';
 
 /** The account provider that marks a WhatsApp user. Better Auth has no such provider, so no one signs in with it. */
 export const WHATSAPP_PROVIDER_ID = 'whatsapp';
@@ -119,7 +119,11 @@ export type IneligibleReason =
   /** The address is not this user's `whatsapp-<id>@noreply.askansari.ai`. */
   | 'address'
   | 'registered_via'
-  | 'admin';
+  /**
+   * The role is anything but exactly `user` (an allowlist: better-auth's admin
+   * plugin reads a comma-separated `user,admin` as admin, and roles are free text).
+   */
+  | 'role';
 
 export type WhatsappTokenRequest = {
   userId: string;
@@ -172,7 +176,7 @@ async function decideUnderLock(
   }
   if (user.email !== whatsappAddress(userId)) return { kind: 'ineligible', reason: 'address' };
   if (user.registeredVia !== WHATSAPP_REGISTERED_VIA) return { kind: 'ineligible', reason: 'registered_via' };
-  if (user.role === ADMIN_ROLE) return { kind: 'ineligible', reason: 'admin' };
+  if (user.role !== USER_ROLE) return { kind: 'ineligible', reason: 'role' };
 
   if (isBanned(user, now)) {
     await tx.delete(session).where(eq(session.userId, userId));

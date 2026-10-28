@@ -30,8 +30,13 @@ start without it), from `apps/auth/`:
 | `revoke <service> --key <key id>` | Sets `enabled = false`. Keeps the row. |
 
 Every write is two steps, as in `grant-admin.ts`: run it without `--confirm` to see the service
-user and what would happen (nothing is written, exit 2), then again with `--confirm <the service
-user's id>` (`--confirm <service>` for `create-service`, which has no user yet). The script
+user and what would happen (nothing is written, exit 2), then again with `--confirm <the id it
+showed>`: the service user's id for `create-key` and `rotate`, the **key's** id for
+`update-limits` and `revoke` (so a confirm copied from another key's show step writes nothing),
+and the service name for `create-service`, which has no user yet. `--name` and `--client-id` take
+1 to 64 letters, digits, spaces, dots, underscores and hyphens; a value that looks like a key is
+refused, since both are printed by `list` and sent to Sentry. Without `SENTRY_DSN` every write
+prints the key-log banner and exits 3 (no record is attempted). The script
 prints the database as `hostname:port` only. Limits have no defaults and are checked against the
 bounds in `packages/auth/src/limits.ts`; there is no expiry option and no budget without a
 daily refill (a budget that does not refill deletes the key the first time it runs out).
@@ -188,13 +193,13 @@ apart.
 
 A WhatsApp user gets a token only if: its **only** account row is its `whatsapp` row; its
 address is its own `whatsapp-<id>@noreply.askansari.ai`; `registered_via = 'whatsapp'`; and its
-role is not `admin`. A violation is a 500 for every message from that user, never a token, and
+role is exactly `user` (anything else, `admin`, `user,admin` or an unknown role, is refused). A violation is a 500 for every message from that user, never a token, and
 it stays so until repaired.
 
 1. Find the user id: the auth service's log line
    `whatsapp exchange: ineligible user refused (repair per the service-keys runbook)` carries
    `{userId, reason}` (the Sentry event carries counts only). `reason` is one of `accounts`,
-   `address`, `registered_via` or `admin`.
+   `address`, `registered_via` or `role`.
 2. Inspect, in the auth database:
 
    ```sql
@@ -203,7 +208,7 @@ it stays so until repaired.
    ```
 
 3. Repair the one thing `reason` names: `accounts`, delete the stray (non-`whatsapp`) account
-   row; `admin`, set the role back to `user` with `grant-admin.ts --revoke <email>`; `address` or `registered_via`, correct it. If you cannot tell how the
+   row; `role`, set the role back to `user` with `grant-admin.ts --revoke <email>`; `address` or `registered_via`, correct it. If you cannot tell how the
    row came to be, delete the user (`delete from auth.users where id = '<user id>'`; its sessions
    and accounts cascade): the next message recreates them as a new user. Their app data in
    apps/api stays under the old id, so prefer a targeted repair.

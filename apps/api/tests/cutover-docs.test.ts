@@ -505,7 +505,7 @@ describe('the service-keys runbook (spec 329)', () => {
     expect(message).toBeDefined();
     const repair = section('Eligibility repair');
     expect(repair).toContain(`\`${message}\``);
-    for (const reason of ['accounts', 'address', 'registered_via', 'admin']) expect(repair).toContain(`\`${reason}\``);
+    for (const reason of ['accounts', 'address', 'registered_via', 'role']) expect(repair).toContain(`\`${reason}\``);
   });
 
   it('has the key log the script banner points to', () => {

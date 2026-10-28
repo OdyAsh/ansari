@@ -168,7 +168,7 @@ describe('grant-admin.ts', () => {
   });
 
   // Demotion only lowers a role, so it is not refused: it is the runbook's repair
-  // for a WhatsApp user found holding `admin` (eligibility reason `admin`).
+  // for a WhatsApp user found holding `admin` (eligibility reason `role`).
   it('revokes a noreply user seeded as admin, and still refuses to grant it (spec 329)', async () => {
     const email = 'whatsapp-seeded-admin@noreply.askansari.ai';
     const { rows } = await service.client.query<{ id: string }>(
