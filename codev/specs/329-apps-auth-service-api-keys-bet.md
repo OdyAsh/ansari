@@ -82,7 +82,7 @@ It ships as migration `0001`, generated, reviewed as SQL, applied by hand before
 **Key settings.** Each key has:
 - a per-service prefix (`wa_` for WhatsApp) and a name;
 - `metadata` carrying the partner's client id;
-- a per-window rate limit (`rateLimitTimeWindow`, `rateLimitMax`) and a daily budget (`remaining` with `refillAmount` and `refillInterval` of 24 h), both required with no defaults. The create script validates them against bounds declared in `limits.ts`, the single home of limit numbers. Values are chosen by the operator from owner decision 3.
+- a per-window rate limit (`rateLimitTimeWindow`, `rateLimitMax`) and a daily budget (`remaining` with `refillAmount` and `refillInterval` of 24 h), both required with no defaults. The create script validates them against bounds declared in `limits.ts`, the single home of limit numbers. Values are chosen by the operator within the bounds the plan sizes from legacy traffic (owner decision 3).
 - **no expiry.** A production credential must not die silently, so rotation is driven by the runbook. The create script offers no expiry option.
 
 The script refuses `remaining` without a refill: probed above, that configuration deletes the key the first time a burst exhausts it. **Budgets are per key, not per service:** while two keys are live during a rotation, the service's ceiling doubles. The runbook says so, and rotation overlap is kept short.
@@ -332,7 +332,7 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
 
 ## Constraints
 
-- **Risk tier High** (auth model, new table, new credential type): porch's consultation on spec, plan and PR, plus the security architect's 3-way review at each gate. Decisions 1 and 2 are answered; the owner answers 3 and 4 at the spec-approval gate.
+- **Risk tier High** (auth model, new table, new credential type): porch's consultation on spec, plan and PR, plus the security architect's 3-way review at each gate. All four owner decisions are answered (decision 3's numbers are set in the plan).
 - **Pin, do not bump.** The plugin's newest release requires core 1.7.14; bumping core is a separate, joint change.
 - **Schema discipline.** `schema.ts` is hand-written; `drizzle-kit generate` → reviewed SQL → applied by a human with `psql -v ON_ERROR_STOP=1 --single-transaction` against the auth database. Never `db:push`. `architect:main` is messaged before the journal entry is committed. Migration before code at deploy.
 - **Two databases.** Everything here is in the auth database and apps/auth. apps/api changes only in tests. No query crosses the two.
@@ -399,18 +399,18 @@ A small table of hashed keys with permissions and limits, verified by apps/auth'
 
 ## Open Questions
 
-**Critical: owner decisions (1 and 2 answered; 3 and 4 open)**
+**Critical: owner decisions (all answered, 2026-10-28)**
 
 1. ~~The non-interactive domain name.~~ **Decided by the owner (2026-10-28):** `@noreply.askansari.ai`, a fixed reserved subdomain with the account kind as a local-part prefix (`whatsapp-<user id>`, `service-<service name>`). This follows the common convention (GitHub's `users.noreply.github.com`, Apple's `privaterelay.appleid.com`). Considered and rejected:
    - a hostname per user (e.g. `whatsapp-<id>.askansari.ai`): the reserved check would have to pattern-match hostnames instead of testing one fixed suffix, and the id would sit in a DNS label;
    - the bare `@askansari.ai`: it would refuse real staff addresses.
 2. ~~Store the BSUID raw or HMAC it.~~ **Decided by the owner (2026-10-28): raw**, in `account.account_id`, no HMAC. The original reasoning: The BSUID is already Meta's business-scoped pseudonym and is needed for lookup, as any OAuth provider id is. HMAC defends against correlation after a database leak, but costs a new secret, a new env var and a rotation story that re-keys every row.
-3. **The WhatsApp key's limits**, sized from the legacy WhatsApp service's traffic. The decision is two numbers per key:
+3. **The WhatsApp key's limits. Decided by the owner (2026-10-28): deferred to the plan.** The plan sets the key's per-window ceiling and daily budget, the `limits.ts` bounds, the per-user exchange budget and the alert thresholds from the legacy WhatsApp service's traffic data, and records the sizing. The framing below stands: The decision is two numbers per key:
    - a per-window ceiling (`rateLimitMax` per `rateLimitTimeWindow`, e.g. per minute);
    - a daily budget (`refillAmount` per 24 h).
 
    Recommendation: both, at about twice the legacy peak, sized for instances × restarts, since the consumer's 15-minute token cache is per process. A refilled budget is safe: exhaustion refuses and keeps the key. The `limits.ts` bounds and the per-user exchange budget are set in the plan from the same traffic data. Budgets are per key, so rotation briefly doubles them.
-4. **The leaderboard: migrate from its static secret now or later.** Recommendation: later. Nothing forces it, and this spec ships one consumer.
+4. **The leaderboard. Decided by the owner (2026-10-28): later, out of scope.** It stays on its static secret. Nothing forces it, and this spec ships one consumer.
 
 **Resolved** (by the security architect's direction or by builder decision; recorded so the plan does not re-decide them)
 
