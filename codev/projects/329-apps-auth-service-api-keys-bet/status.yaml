@@ -20,11 +20,11 @@ plan_phases:
     status: complete
   - id: phase_6
     title: The exchange route, boot assertion and alerts
-    status: in_progress
+    status: complete
   - id: phase_7
     title: End-to-end contract test, source scan and documentation
-    status: pending
-current_plan_phase: phase_6
+    status: in_progress
+current_plan_phase: phase_7
 gates:
   spec-approval:
     status: approved
@@ -38,8 +38,8 @@ gates:
     status: pending
   verify-approval:
     status: pending
-iteration: 2
-build_complete: true
+iteration: 1
+build_complete: false
 history:
   - iteration: 1
     plan_phase: phase_1
@@ -114,7 +114,7 @@ history:
         file: >-
           /Users/amrmohamed/repos/iaser/ansari/.builders/spir-329/codev/projects/329-apps-auth-service-api-keys-bet/329-phase_6-iter1-gemini.txt
 started_at: '2026-10-28T04:31:56.766Z'
-updated_at: '2026-10-28T09:09:40.225Z'
+updated_at: '2026-10-28T09:11:23.836Z'
 context_refreshes:
   - boundary: plan-phase:phase_2
     at: '2026-10-28T06:20:23.009Z'
@@ -131,3 +131,5 @@ context_refreshes:
   - boundary: plan-phase:phase_6
     at: '2026-10-28T08:39:44.585Z'
     acknowledged_at: '2026-10-28T08:39:50.175Z'
+  - boundary: plan-phase:phase_7
+    at: '2026-10-28T09:11:23.836Z'
