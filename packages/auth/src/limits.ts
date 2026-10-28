@@ -132,3 +132,49 @@ export const ROUTER_RULES: Readonly<Record<string, false>> = {
   '/reset-password': false,
   '/token': false,
 };
+
+// Service keys (spec 329). These limits live in each key's own row (the
+// api-key plugin enforces them at verify), not in `rate_limit`, and are set by
+// the operator through apps/auth's service-keys script. Unlike the rules above,
+// windows here are in MILLISECONDS, as the plugin stores them.
+
+const SECOND_MS = 1000;
+const DAY_MS = 24 * 60 * 60 * SECOND_MS;
+
+/** A service key's limits, in the plugin's field names and units. */
+export type KeyLimits = {
+  /** Requests allowed per window. */
+  readonly rateLimitMax: number;
+  /** The window, in milliseconds. */
+  readonly rateLimitTimeWindow: number;
+  /** The daily budget: `remaining` is refilled to this every `refillInterval`. */
+  readonly refillAmount: number;
+  /** Always KEY_REFILL_INTERVAL: the budget is daily. */
+  readonly refillInterval: number;
+};
+
+/** A key's budget refills once a day (spec 329: a daily budget). */
+export const KEY_REFILL_INTERVAL = DAY_MS;
+
+/**
+ * The WhatsApp key's initial values (owner decision 3, sized by judgement in
+ * plan 329): 60 per minute bounds a leaked key or a looping client within a
+ * minute; 3,000 a day is hundreds of conversations at one exchange per 15
+ * minutes, with headroom. The runbook's issuance command passes these.
+ */
+export const WHATSAPP_KEY_INITIAL: KeyLimits = {
+  rateLimitMax: 60,
+  rateLimitTimeWindow: 60 * SECOND_MS,
+  refillAmount: 3000,
+  refillInterval: KEY_REFILL_INTERVAL,
+};
+
+/**
+ * What the service-keys script accepts for a key (inclusive). Wide on purpose:
+ * raising a key's values never needs these to change.
+ */
+export const WHATSAPP_KEY_BOUNDS = {
+  rateLimitMax: { min: 1, max: 100_000 },
+  rateLimitTimeWindow: { min: SECOND_MS, max: DAY_MS },
+  refillAmount: { min: 1, max: 10_000_000 },
+} as const;

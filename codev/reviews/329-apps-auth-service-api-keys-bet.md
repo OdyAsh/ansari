@@ -209,3 +209,39 @@ This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under 
 - **Spec wording versus the guard order:** the spec's "sign-up with a noreply address (any case, surrounding spaces) returns the 409 body". Validation runs first in `signUpGuard`, so an address with surrounding spaces is an invalid email (400) for every address, reserved or not. The test asserts what holds: a noreply address and a taken address answer identically, padded or not (409 unpadded, 400 padded). There is still no oracle.
 - Negative-tested: with the noreply domain removed from `isReservedAddress`, 8 tests go red.
 - Green per package (`@ansari/auth` 220, `ansari-auth` 263, `ansari-api` 1113 + 3 skipped); typecheck and lint pass at the root. The root test run on the shared machine (load average 92/74/60 at the time) failed only with timeouts (27 hook, 6 test), across all four packages including the untouched frontend: the monorepo-wide matter recorded under Flaky Tests.
+
+## Phase 4: service users and key operator scripts (notes)
+
+- **Design decisions within the plan:**
+  - `create-service` has no user yet, so its `--confirm` takes the service name (`--confirm whatsapp`). Every other write confirms with the service user's id.
+  - The window flag is in seconds (as every rule in `limits.ts` is) and stored in milliseconds (as the plugin stores it). The budget is `--daily` and always refills every 24 h. A bare budget cannot be expressed: `--remaining` is refused at the command line, and `checkKeyLimits` refuses a budget without `KEY_REFILL_INTERVAL` before the plugin is called.
+  - `update-limits` also sets `remaining` to the new daily budget: the new budget starts now.
+  - `rotate` refuses when the service has no live key (use `create-key`). It prints the old key ids and the exact revoke commands.
+  - `create-service` also sends a Sentry event. The spec names create, rotate and revoke, and the plan adds update-limits. A service user is a durable change too, so every write is recorded.
+  - Exit codes: 0 done, 1 refused or failed, 2 nothing written (show step, confirm mismatch), 3 written but its Sentry record not sent (banner). Without `SENTRY_DSN`, `Sentry.flush` has no client and returns false, so every write exits 3 with the banner. That is loud on purpose.
+  - The script prints `Auth database: <hostname>:<port>` first on every subcommand, list included. `urlHost` moved to `apps/auth/scripts/url-host.ts` beside the new `urlHostPort`.
+  - `ansari-mcp` borrows `WHATSAPP_KEY_BOUNDS` until #314 sizes its own.
+- **The plan's leak test, adjusted:** the plan's URL `postgres://user:secret@db.example:6543/auth?sslmode=require` asks that the output contain none of `user`, `secret` and `sslmode`. The script's own words say "user" ("Service user for whatsapp"), so the test asserts `user:secret`, `secret`, `sslmode`, `/auth?` and `postgres://` absent. A second URL with distinctive userinfo, path and query (`opsname-zq`, `pw-zq-9`, `authdb-zq`, `verify-full`) shows that none of them is echoed. "secret" did catch one real wording problem: the handoff line said "secret store", and now says "credential store".
+- **apps/api's source scan (scan 2) caught a literal database URL** in the first draft of the demo harness. The harness now uses the placeholder URL `setAuthEnv` puts in `DATABASE_URL`, and derives its leak checks from the parsed URL. The scan's exclusion list is unchanged.
+- **Negative-tested** (`apps/auth/tests/service-keys.test.ts`, 73 tests). Each mutation was applied to the script alone and then reverted:
+
+  | Mutation | Tests red |
+  |---|---|
+  | raw key printed twice | 3 |
+  | database URL appended to the host line | 6 |
+  | Sentry flush not awaited | 3 |
+  | revoke leaves `enabled = true` | 1 |
+  | refill interval not checked | 1 |
+
+- **Runnable harness** (`pnpm --filter ansari-auth exec tsx scripts/probes/service-keys-demo.ts`, pglite from the journal). It runs every subcommand in the runbook's order, including a confirm mismatch, an out-of-bounds update and an expiry flag. Run 2026-10-28, summary of its 13 steps:
+
+  ```
+     7 (exit 0)
+     2 (exit 1)
+     4 (exit 2)
+    13 Auth database: localhost:5432
+     1 CHECK database printed as hostname:port only: PASS
+     1 CHECK two keys created, each printed once: PASS
+  ```
+
+- Green per package: `@ansari/auth` 220 + 1 skipped (the `DEPLOYED_THROUGH` parity check, pending the rebase), `ansari-auth` 336, `ansari-api` 1113 + 3 skipped. Root typecheck and lint pass.

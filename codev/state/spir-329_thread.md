@@ -76,3 +76,12 @@
 - Skipped porch's context-refresh task at the phase_3 boundary (a second porch next moved on).
 - Phase 3: isReservedAddress covers @noreply.askansari.ai; isSystemAddress is untouched. The reset sender skips reserved addresses; grant-admin refuses noreply.
   The spec's "surrounding spaces → 409" doesn't match the guard order (validation first → 400 for all); the test asserts identical answers instead.
+
+## 2026-10-28: phase 4 (service users and key scripts)
+
+- packages/auth/src/service-users.ts (SERVICES, SECRET_SCANNING_PATTERNS, createServiceUser in one tx, findServiceUser none/one/many, listServiceKeys without the hash).
+  limits.ts gains WHATSAPP_KEY_INITIAL (60/60 s, 3000/24 h) and WHATSAPP_KEY_BOUNDS, both in ms, as the plugin stores them.
+- apps/auth/scripts/service-keys.ts: create-service | create-key | list | rotate | update-limits | revoke. grant-admin posture. Exit 2 = nothing written, 3 = written but the Sentry record was not sent (banner).
+  create-service confirms with the service name, since there is no id yet.
+- urlHost moved to apps/auth/scripts/url-host.ts (+ urlHostPort).
+- Surprise: apps/api's source scan forbids literal DB URLs in apps/auth scripts. The demo harness now uses setAuthEnv's DATABASE_URL instead.

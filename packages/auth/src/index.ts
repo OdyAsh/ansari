@@ -46,6 +46,7 @@ export {
   whatsappAddress,
 } from './reserved';
 export * as users from './users';
+export * as serviceUsers from './service-users';
 export {
   resetEmailHtml,
   resetLink,

@@ -28,8 +28,8 @@ import {
   isForwarderHost,
   makeHashes,
   refusal,
-  urlHost,
 } from '../../scripts/cutover/rehearsal-anomalies';
+import { urlHost } from '../../scripts/url-host';
 import { runPsqlFile } from './psql';
 
 const here = dirname(fileURLToPath(import.meta.url));
