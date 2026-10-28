@@ -300,7 +300,7 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
 - [ ] The alert thresholds are named constants in `limits.ts`; their values are set with owner decision 3.
 
 **Reserved domain**
-- [ ] Sign-up with a `@noreply.askansari.ai` address (any case, surrounding spaces) returns the same 409 body as a taken address.
+- [ ] Sign-up with a `@noreply.askansari.ai` address (any case) returns the same 409 body as a taken address. With surrounding spaces, sign-up's validation (which runs first, in the legacy register order) answers 400 for every address, reserved or not, so a padded noreply address and a padded taken address still answer identically (amended in phase 3: the original text promised 409 for a padded address, which the existing guard order never gives).
 - [ ] Near misses are not reserved: `someone@askansari.ai`, `x@noreply.askansari.ai.example.com` and `x@notnoreply.askansari.ai` sign up normally.
 - [ ] A reset request for an existing noreply user returns the same response as an unknown address, and the mailer is never called.
 - [ ] The `user.create.before` hook refuses both reserved domains on every Better Auth path.
