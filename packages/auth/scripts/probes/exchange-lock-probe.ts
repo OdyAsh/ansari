@@ -16,18 +16,16 @@
  * The output is pasted into the review (codev/reviews/329-*.md).
  */
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 import { generateRandomString } from 'better-auth/crypto';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Client, Pool } from 'pg';
 
-import { createAuth, resetEnvCache, type Db } from '../../src/index';
+import { createAuth, type Db } from '../../src/index';
 import * as schema from '../../src/schema';
+import { connect, localUrlFromArgs, resetSchema, serverVersion, setProbeEnv } from './probe-db';
 
-const DRIZZLE_DIR = fileURLToPath(new URL('../../drizzle/', import.meta.url));
 const DEADLINE_MS = 10_000;
 
 type Result = { step: string; ok: boolean; detail: string };
@@ -58,28 +56,6 @@ function errCode(err: unknown): string {
   if (err instanceof Deadline) return 'DEADLINE';
   const e = err as { code?: unknown; name?: unknown; message?: unknown };
   return String(e.code ?? e.name ?? 'unknown');
-}
-
-async function connect(url: string): Promise<Client> {
-  const client = new Client({ connectionString: url });
-  await client.connect();
-  return client;
-}
-
-async function resetSchema(url: string): Promise<void> {
-  const client = await connect(url);
-  try {
-    await client.query('DROP SCHEMA IF EXISTS auth CASCADE');
-    const journal = JSON.parse(readFileSync(`${DRIZZLE_DIR}meta/_journal.json`, 'utf8')) as {
-      entries: { idx: number; tag: string }[];
-    };
-    for (const { tag } of [...journal.entries].sort((a, b) => a.idx - b.idx)) {
-      const text = readFileSync(`${DRIZZLE_DIR}${tag}.sql`, 'utf8');
-      for (const stmt of text.split('--> statement-breakpoint')) if (stmt.trim()) await client.query(stmt);
-    }
-  } finally {
-    await client.end();
-  }
 }
 
 async function newUser(client: Client): Promise<string> {
@@ -235,20 +211,6 @@ async function stepLockTimeout(url: string): Promise<void> {
   }
 }
 
-function setProbeEnv(url: string): void {
-  process.env.DATABASE_URL = url;
-  process.env.BETTER_AUTH_SECRET = 'probe-secret-at-least-32-characters-long-00';
-  process.env.BETTER_AUTH_URL = 'http://localhost:3100';
-  process.env.CORS_ORIGIN = 'http://localhost:3100';
-  process.env.AUTH_LAYER_ORIGIN = 'https://api.probe.example';
-  process.env.NODE_ENV = 'test';
-  process.env.AUTH_JWT_ISSUER = 'https://auth.probe.example';
-  process.env.AUTH_JWT_AUDIENCE = 'ansari-api-probe';
-  process.env.RESEND_API_KEY = 're_probe_key_at_least_20_chars';
-  process.env.FRONTEND_URL = 'http://localhost:8081';
-  resetEnvCache();
-}
-
 /**
  * E: pool starvation. 10 concurrent exchanges against a pool of 2 connections.
  * Each locks its user, writes a session and commits, then signs with the real
@@ -318,20 +280,8 @@ async function stepPool(url: string, signInside: boolean, connectTimeout: number
 }
 
 async function main(): Promise<void> {
-  const url = process.argv[2];
-  if (!url) {
-    console.error('Usage: exchange-lock-probe.ts <postgres URL of a throwaway local container>');
-    process.exit(2);
-  }
-  const host = new URL(url).hostname;
-  if (host !== '127.0.0.1' && host !== 'localhost') {
-    console.error(`Refusing to run against ${host}: this probe drops the auth schema. Local containers only.`);
-    process.exit(2);
-  }
-  const server = await connect(url);
-  const { rows } = await server.query<{ server_version: string }>('SHOW server_version');
-  await server.end();
-  console.log(`Probe 4 against Postgres ${rows[0]!.server_version} at ${host} (${new Date().toISOString()})`);
+  const { url, host } = localUrlFromArgs('exchange-lock-probe.ts');
+  console.log(`Probe 4 against Postgres ${await serverVersion(url)} at ${host} (${new Date().toISOString()})`);
 
   await resetSchema(url);
   await stepSameTransaction(url);

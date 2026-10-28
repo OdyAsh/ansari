@@ -40,6 +40,71 @@ All green (16 tests):
 
 **Gates:** before phase 4 (probes 1, 1b) and before phase 5 (probes 2, 4a, session token, probe 4): all match the plan.
 
+### Gate before phase 5: rerun on real Postgres, 2026-10-28
+
+At the security architect's request, every gate-before-phase-5 probe was rerun
+on real Postgres (a fresh `postgres:18` container on 127.0.0.1) before any phase 5
+code, with the output pasted verbatim. Probes 2, 4a and the session-token probe
+had only run on pglite; `packages/auth/scripts/probes/library-probes.ts` now runs them
+against Postgres too. It prints claim names, headers and shapes, never a token.
+The setup shared with probe 4 (URL guard, schema reset, env) moved to
+`packages/auth/scripts/probes/probe-db.ts`. Both scripts are run as
+`pnpm --filter ansari-auth exec tsx ../../packages/auth/scripts/probes/<script>.ts postgres://postgres:probe@127.0.0.1:55432/postgres`.
+
+Probes 2, 4a and session token:
+
+```
+Probes 2, 4a and session token against Postgres 18.6 (Debian 18.6-1.pgdg13+2) at 127.0.0.1 (2026-10-28T08:12:18.312Z)
+PASS  2 signJWT({sub, sid, iat, exp}) matches a /api/auth/token JWT; the passed exp is honoured
+      /token  header {"alg":"EdDSA","kid":"5dcdae02-16d0-45b1-ae45-a4a5f2bc2ce4"}  claims [aud,exp,iat,iss,sid,sub]
+      signJWT header {"alg":"EdDSA","kid":"5dcdae02-16d0-45b1-ae45-a4a5f2bc2ce4"}  claims [aud,exp,iat,iss,sid,sub]
+      iss: /token https://auth.probe.example | signJWT https://auth.probe.example
+      aud: /token ansari-api-probe | signJWT ansari-api-probe
+      exp - iat: /token 900 s | signJWT 900 s
+      sub = user id: true; sid = session id: true
+      passed exp 1793176038 -> signed exp 1793176038; passed iat 1793175138 -> signed iat 1793175138
+PASS  2 without iat the claim set differs (why the exchange passes it)
+      signJWT({sub, sid}) claims [aud,exp,iss,sid,sub]
+PASS  4a sign-up with phone_number is refused or ignored, and nothing is stored
+      sign-up status 400, body {"message":"phone_number is not allowed to be set","code":"FIELD_NOT_ALLOWED"}
+      users rows for the email: 0; phone_number stored: null
+PASS  4a with phone_number set in the row, it is absent from sign-in and get-session
+      sign-in 200: user keys [banExpires,banReason,banned,createdAt,email,emailVerified,first_name,id,image,last_name,name,registered_via,role,updatedAt]; contains the number: false; contains "phone": false
+      get-session 200: user keys [banExpires,banReason,banned,createdAt,email,emailVerified,first_name,id,image,last_name,name,registered_via,role,updatedAt]; contains the number: false; contains "phone": false
+PASS  session token: generateRandomString(32, a-z, A-Z, 0-9) has the shape createSession writes
+      createSession row token: length 32, matches ^[A-Za-z0-9]{32}$: true
+      generator, 1000 samples: all match: true; distinct characters seen: 62 of 62
+      without the explicit alphabet, 200 samples contain '-' or '_': true
+
+5/5 steps as expected.
+```
+
+Probe 4 (the refactored script, same steps as the phase 1 run):
+
+```
+Probe 4 against Postgres 18.6 (Debian 18.6-1.pgdg13+2) at 127.0.0.1 (2026-10-28T08:12:23.915Z)
+PASS  A same-transaction session insert under FOR NO KEY UPDATE: committed without waiting; 1 session
+PASS  B concurrent ban waits for the exchange, then deletes its session: ban waited: true; ban finished after exchange commit: true; sessions left: 0
+PASS  C session insert from another connection does not wait on FOR NO KEY UPDATE: insert completed while the lock was held
+PASS  C' contrast: FOR UPDATE blocks another connection's session insert (the hazard): other connection's insert: 57014 (57014 = cancelled by statement_timeout, i.e. it waited)
+PASS  D lock_timeout turns a held lock into 55P03: waiting exchange got: 55P03
+(node:5862) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+PASS  E1 signing AFTER commit, pool max 2: 10/10 finished
+PASS  E2 signing INSIDE the transaction, pool max 2, no connect timeout: deadline: the run HUNG (10000 ms), as expected for signing inside
+PASS  E2 signing INSIDE the transaction, pool max 2, connect timeout 2000 ms: 1/10 finished; failures: Error (loud failure, no hang)
+
+8/8 steps as expected.
+```
+
+The pglite pinning tests for the same probes, run in the same session:
+`tests/config/api-key.test.ts` 16/16 passed.
+
+**Gate before phase 5:** probe 2 (claim set, `alg`, `iss`, `aud` and the 900 s lifetime equal
+`/api/auth/token`'s; the passed `exp` and `iat` are honoured; without `iat` the claim set lacks it),
+probe 4a (refused 400 `FIELD_NOT_ALLOWED`, nothing stored, absent from sign-in and get-session),
+the session-token probe, and every step of probe 4 (A, B, C, C', D, E1, E2 ×2) match the plan.
+
 ### Phase 1: blocked-path prefix proven load-bearing
 
 With `API_KEY_PREFIX` removed from the middleware, the variant and absolute-form tests fail (2 failed); restored, all pass.

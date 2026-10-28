@@ -89,3 +89,11 @@
 - Phase 4 review iter 2 (codex): a REAL leak. Sentry's default Console integration turned the console.log'd raw key into a breadcrumb on the operator event.
   The test used defaultIntegrations:false and so hid it. Fix: the script's own Sentry options (no breadcrumbs) + stdout.write printing; test with production defaults.
   Gemini lane skipped both rounds (agy exit 3).
+
+## 2026-10-28: gate before phase 5 (security architect's order)
+
+- Rerun on real Postgres 18.6, outputs pasted verbatim in the review: probes 2, 4a and session token (new
+  packages/auth/scripts/probes/library-probes.ts, 5/5) and probe 4 (8/8). All match the plan. Shared probe setup moved to probe-db.ts.
+- For lessons-learned at the review phase (security architect): with Sentry's default integrations, anything printed through console
+  becomes a breadcrumb and travels with the next event. A one-time secret print needs breadcrumbs off and direct stdout, and a log-capture
+  test is not enough on its own: a production-shaped Sentry capture test is.
