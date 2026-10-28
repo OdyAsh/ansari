@@ -203,3 +203,9 @@ timing run 3 exit=1 fails=[@ansari/auth:test:  FAIL  tests/auth.http.test.ts [ t
 ```
 
 This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under contention), passed to the main architect as a follow-up; this PR fixes only the two files that blocked its own green runs.
+
+## Phase 3: reserved noreply domain (notes)
+
+- **Spec wording versus the guard order:** the spec's "sign-up with a noreply address (any case, surrounding spaces) returns the 409 body". Validation runs first in `signUpGuard`, so an address with surrounding spaces is an invalid email (400) for every address, reserved or not. The test asserts what holds: a noreply address and a taken address answer identically, padded or not (409 unpadded, 400 padded). There is still no oracle.
+- Negative-tested: with the noreply domain removed from `isReservedAddress`, 8 tests go red.
+- Green per package (`@ansari/auth` 220, `ansari-auth` 263, `ansari-api` 1113 + 3 skipped); typecheck and lint pass at the root. The root test run on the shared machine (load average 92/74/60 at the time) failed only with timeouts (27 hook, 6 test), across all four packages including the untouched frontend: the monorepo-wide matter recorded under Flaky Tests.

@@ -71,11 +71,35 @@ describe('guard order: validation → reserved/taken → strength', () => {
   it.each([
     ['any @system.ansari.chat address', 'anything@system.ansari.chat'],
     ['the system domain in mixed case', 'Leaderboard@SYSTEM.Ansari.Chat'],
+    ['any @noreply.askansari.ai address (spec 329)', 'whatsapp-anything@noreply.askansari.ai'],
+    ['the noreply domain in mixed case', 'Service-WhatsApp@NoReply.AskAnsari.AI'],
   ])('reserves %s, and creates no row', async (_label, email) => {
     const res = await signUp({ email, password: STRONG, name: 'X' });
     expect(res.status).toBe(409);
     expect((await json(res)).message).toBe(EMAIL_TAKEN_MESSAGE);
     expect(await userRow(email.toLowerCase())).toBeUndefined();
+  });
+
+  it('a noreply address gets the response a taken address gets, with or without surrounding spaces', async () => {
+    // Validation runs first, so surrounding spaces are an invalid email (400) for
+    // every address; the reserved and the taken address still answer identically.
+    for (const pad of ['', '  ']) {
+      const reserved = await signUp({ email: `${pad}service-whatsapp@noreply.askansari.ai${pad}`, password: STRONG, name: 'X' });
+      const taken = await signUp({ email: `${pad}taken@example.com${pad}`, password: STRONG, name: 'X' });
+      expect(reserved.status).toBe(pad ? 400 : 409);
+      expect(reserved.status).toBe(taken.status);
+      expect(await reserved.json()).toEqual(await taken.json());
+    }
+  });
+
+  it.each([
+    ['someone@askansari.ai'],
+    ['x@noreply.askansari.ai.example.com'],
+    ['x@notnoreply.askansari.ai'],
+  ])('a near miss of the noreply domain signs up normally: %s', async (email) => {
+    const res = await signUp({ email, password: STRONG, name: 'X' });
+    expect(res.status).toBe(200);
+    expect(await userRow(email)).toBeDefined();
   });
 
   it('an address that would once have been a configured admin registers like any other (no admin list)', async () => {
@@ -135,6 +159,18 @@ describe('defence in depth: no path creates a reserved address', () => {
       })
     ).rejects.toMatchObject({ statusCode: 409 });
     expect(await userRow('direct@system.ansari.chat')).toBeUndefined();
+  });
+
+  it('the user create hook refuses a noreply address too (spec 329)', async () => {
+    const ctx = await auth.$context;
+    await expect(
+      ctx.internalAdapter.createUser({
+        email: 'whatsapp-direct@noreply.askansari.ai',
+        name: 'Direct',
+        emailVerified: false,
+      })
+    ).rejects.toMatchObject({ statusCode: 409 });
+    expect(await userRow('whatsapp-direct@noreply.askansari.ai')).toBeUndefined();
   });
 });
 

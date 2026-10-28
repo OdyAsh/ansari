@@ -11,6 +11,7 @@ import {
   RECENT_ACCOUNT_MS,
   runGrantAdmin,
   scriptError,
+  NoreplyAddressError,
   SystemAddressError,
 } from '../scripts/grant-admin';
 import { signUpTokens, startService, type Service } from './helpers/service';
@@ -157,6 +158,15 @@ describe('grant-admin.ts', () => {
     }
   });
 
+  it('refuses a noreply-domain address (service and WhatsApp users), before any lookup (spec 329)', async () => {
+    for (const command of [
+      { kind: 'show', email: 'service-whatsapp@noreply.askansari.ai' },
+      { kind: 'grant', email: ' WhatsApp-x@NoReply.AskAnsari.AI ', confirmId: 'x' },
+    ] as const) {
+      await expect(runGrantAdmin(service.db, command)).rejects.toBeInstanceOf(NoreplyAddressError);
+    }
+  });
+
   it('revokes back to role user', async () => {
     const email = nextEmail('revoke');
     await signUpTokens(service, email);
@@ -205,6 +215,7 @@ describe('grant-admin.ts', () => {
     expect(scriptError(new users.UserNotFoundError())).toBe('No auth user has this email');
     expect(scriptError(new ConfirmMismatchError())).toMatch(/Nothing was granted/);
     expect(scriptError(new SystemAddressError())).toMatch(/system-domain/);
+    expect(scriptError(new NoreplyAddressError())).toMatch(/noreply-domain/);
   });
 });
 

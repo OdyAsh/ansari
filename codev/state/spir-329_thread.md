@@ -67,3 +67,12 @@
 - Probe 4a surprise (benign): sign-up with phone_number is REFUSED 400 FIELD_NOT_ALLOWED, not silently ignored; nothing stored.
 - The probe script lives in packages/auth/scripts/probes (apps/auth has no direct pg/drizzle dep), a deviation from the plan path.
 - The prefix rule was proven load-bearing by removing it (2 tests go red).
+
+## 2026-10-28: phases 2 and 3
+
+- Phase 2 (redacted logger) approved. The flaky secrets/copy hooks got their own 100 s deadline (measured: max 47 s, N=6; 30 s red 4/5 and 3/5, 100 s green 5/5).
+  The shared machine (load 20-90 from other builders and simulators) makes the full root run red from timeouts in 5/6 runs across packages:
+  evidence in the review for main's monorepo-wide follow-up. Per-package runs are the reliable signal here.
+- Skipped porch's context-refresh task at the phase_3 boundary (a second porch next moved on).
+- Phase 3: isReservedAddress covers @noreply.askansari.ai; isSystemAddress is untouched. The reset sender skips reserved addresses; grant-admin refuses noreply.
+  The spec's "surrounding spaces → 409" doesn't match the guard order (validation first → 400 for all); the test asserts identical answers instead.

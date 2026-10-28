@@ -18,11 +18,11 @@
  * the account the email resolves to grants nothing; the show step exits 2, so
  * a script that forgets --confirm stops. It warns on a recent or unverified
  * account (the squat signatures), never creates one, and refuses the system
- * domain. A demotion takes effect at
+ * domain and the noreply domain (spec 329). A demotion takes effect at
  * once: apps/api asks for the role on each admin request.
  */
 import 'dotenv/config';
-import { createDb, isSystemAddress, normalizeEmail, users, type Db } from '@ansari/auth';
+import { createDb, isNoreplyAddress, isSystemAddress, normalizeEmail, users, type Db } from '@ansari/auth';
 
 export type GrantAdminCommand =
   | { kind: 'show'; email: string }
@@ -63,6 +63,14 @@ export class SystemAddressError extends Error {
   constructor() {
     super('A system-domain address is never an auth account and is never granted admin.');
     this.name = 'SystemAddressError';
+  }
+}
+
+/** Service and WhatsApp users (spec 329) never sign in and never hold a role. */
+export class NoreplyAddressError extends Error {
+  constructor() {
+    super('A noreply-domain address is a service or WhatsApp user and is never granted admin.');
+    this.name = 'NoreplyAddressError';
   }
 }
 
@@ -110,6 +118,7 @@ export async function runGrantAdmin(
     return { lines: [`Revoked admin from ${email} (role=user).`], exitCode: 0 };
   }
   if (isSystemAddress(email)) throw new SystemAddressError();
+  if (isNoreplyAddress(email)) throw new NoreplyAddressError();
   const user = await users.findUserByEmail(db, email);
   if (!user) throw new users.UserNotFoundError();
   const warnings = squatWarnings(user, now);
@@ -143,7 +152,8 @@ export function scriptError(err: unknown): string {
   if (
     err instanceof users.UserNotFoundError ||
     err instanceof ConfirmMismatchError ||
-    err instanceof SystemAddressError
+    err instanceof SystemAddressError ||
+    err instanceof NoreplyAddressError
   ) {
     return err.message;
   }

@@ -35,7 +35,16 @@ export { getEnv, resetEnvCache, type AuthEnv } from './env';
 export { logBetterAuth, redactError, redactLogArgs } from './logger';
 export * as limits from './limits';
 export { consumeWindow, keysSeenSince, peekWindow, touchKey, type WindowState } from './rate-limit-store';
-export { isSystemAddress, normalizeEmail, SYSTEM_EMAIL_DOMAIN } from './reserved';
+export {
+  isNoreplyAddress,
+  isReservedAddress,
+  isSystemAddress,
+  normalizeEmail,
+  NOREPLY_EMAIL_DOMAIN,
+  serviceAddress,
+  SYSTEM_EMAIL_DOMAIN,
+  whatsappAddress,
+} from './reserved';
 export * as users from './users';
 export {
   resetEmailHtml,
