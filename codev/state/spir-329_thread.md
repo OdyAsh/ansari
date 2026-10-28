@@ -123,3 +123,8 @@
 - Runbook docs/cutover/service-keys-runbook.md + doc tests that read the code (patterns, alert kinds, subcommands, limits). Key log = a table in the runbook.
 - Doc defect fixed everywhere: grant-admin refuses BOTH reserved domains (arch.md, RELEASE.md said system only).
 - Contract summary for #327 sent to security for relay.
+
+## Review phase (2026-10-28)
+- Review doc rewritten into the template; probe outputs and phase notes kept as an appendix. One spec criterion open: staging smoke (#327's builder, pre-production gate).
+- Lessons routed cold (new spec 329 section in lessons-learned.md); hot map entry for spec 300 extended to name spec 329 (count unchanged). arch-critical unchanged (at cap).
+- Merge precondition unchanged: AUTH_DEPLOYED_THROUGH -> 0001 at the rebase after spec 300 cutover; 0001 applied to staging before merge.
