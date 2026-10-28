@@ -85,6 +85,26 @@ describe('assertSchema', () => {
     expect(errors).toEqual([[SCHEMA_MISSING_MESSAGE, { name: 'MissingConstraint', code: BSUID_CONSTRAINT }]]);
   });
 
+  it.each([
+    [
+      'the name on another auth table',
+      `create table auth.decoy (provider_id text, account_id text, constraint ${BSUID_CONSTRAINT} unique (provider_id, account_id))`,
+    ],
+    [
+      'the name on auth.account over other columns',
+      `alter table auth.account add constraint ${BSUID_CONSTRAINT} unique (account_id, user_id)`,
+    ],
+    [
+      'the name on auth.account over the columns in the other order',
+      `alter table auth.account add constraint ${BSUID_CONSTRAINT} unique (account_id, provider_id)`,
+    ],
+  ])('refuses when the real constraint is gone and only %s remains', async (_name, spoof) => {
+    await client.exec(`alter table auth.account drop constraint ${BSUID_CONSTRAINT}`);
+    await client.exec(spoof);
+    expect(await assertSchema(drizzleFor(client))).toBe(false);
+    expect(errors).toEqual([[SCHEMA_MISSING_MESSAGE, { name: 'MissingConstraint', code: BSUID_CONSTRAINT }]]);
+  });
+
   it('starts when the database cannot answer, logging {name, code} only', async () => {
     const { db, state } = switchable(drizzleFor(client));
     state.down = true;

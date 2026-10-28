@@ -57,12 +57,30 @@ export async function pingDatabase(db: Db): Promise<void> {
   await db.execute(sql`select 1`);
 }
 
-/** True when the `auth` schema has the unique constraint `name` (a catalog read; apps/auth's boot check). */
-export async function hasAuthUniqueConstraint(db: Db, name: string): Promise<boolean> {
+/**
+ * True when `auth.<table>` carries the unique constraint `name` over exactly
+ * `columns`, in order (a catalog read; apps/auth's boot check). The table and
+ * the columns are checked, not just the name: Postgres allows the same
+ * constraint name on another table.
+ */
+export async function hasAuthUniqueConstraint(
+  db: Db,
+  table: string,
+  name: string,
+  columns: readonly string[]
+): Promise<boolean> {
   const result = await db.execute(sql`
     select 1 from pg_catalog.pg_constraint c
-      join pg_catalog.pg_namespace n on n.oid = c.connamespace
-     where n.nspname = 'auth' and c.conname = ${name} and c.contype = 'u'
+      join pg_catalog.pg_class r on r.oid = c.conrelid
+      join pg_catalog.pg_namespace n on n.oid = r.relnamespace
+     where n.nspname = 'auth' and r.relname = ${table}
+       and c.conname = ${name} and c.contype = 'u'
+       and array(
+             select a.attname::text
+               from unnest(c.conkey) with ordinality k(attnum, ord)
+               join pg_catalog.pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum
+              order by k.ord
+           ) = string_to_array(${columns.join(',')}, ',')
   `);
   return ((result as { rows?: unknown[] }).rows?.length ?? 0) > 0;
 }

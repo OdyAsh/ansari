@@ -13,8 +13,10 @@ import { hasAuthUniqueConstraint, redactError, schema, type Db } from '@ansari/a
 
 const UNDEFINED_TABLE = '42P01';
 
-/** The constraint migration 0001 adds (packages/auth `schema.ts`). */
+/** The constraint migration 0001 adds (packages/auth `schema.ts`): one user per BSUID. */
 export const BSUID_CONSTRAINT = 'account_provider_id_account_id_unique';
+const BSUID_CONSTRAINT_TABLE = 'account';
+const BSUID_CONSTRAINT_COLUMNS = ['provider_id', 'account_id'] as const;
 
 export const SCHEMA_MISSING_MESSAGE = 'auth boot: schema missing, refusing to start (apply migration 0001 first)';
 export const SCHEMA_UNCHECKED_MESSAGE = 'auth boot: schema check failed, starting anyway';
@@ -38,7 +40,7 @@ export async function assertSchema(db: Db): Promise<boolean> {
     return true;
   }
   try {
-    if (await hasAuthUniqueConstraint(db, BSUID_CONSTRAINT)) return true;
+    if (await hasAuthUniqueConstraint(db, BSUID_CONSTRAINT_TABLE, BSUID_CONSTRAINT, BSUID_CONSTRAINT_COLUMNS)) return true;
     console.error(SCHEMA_MISSING_MESSAGE, { name: 'MissingConstraint', code: BSUID_CONSTRAINT });
     return false;
   } catch (err) {
