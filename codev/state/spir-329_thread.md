@@ -85,3 +85,7 @@
   create-service confirms with the service name, since there is no id yet.
 - urlHost moved to apps/auth/scripts/url-host.ts (+ urlHostPort).
 - Surprise: apps/api's source scan forbids literal DB URLs in apps/auth scripts. The demo harness now uses setAuthEnv's DATABASE_URL instead.
+- Phase 4 review iter 1 (codex): the host line printed after the write (buffered output). Lines now stream, and the host line comes before connect().
+- Phase 4 review iter 2 (codex): a REAL leak. Sentry's default Console integration turned the console.log'd raw key into a breadcrumb on the operator event.
+  The test used defaultIntegrations:false and so hid it. Fix: the script's own Sentry options (no breadcrumbs) + stdout.write printing; test with production defaults.
+  Gemini lane skipped both rounds (agy exit 3).

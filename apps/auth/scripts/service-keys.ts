@@ -47,7 +47,6 @@ import {
   type Db,
 } from '@ansari/auth';
 
-import { initSentry } from '../src/alerts';
 import { urlHostPort } from './url-host';
 
 type ServiceName = serviceUsers.ServiceName;
@@ -540,8 +539,29 @@ export async function serviceKeys(argv: readonly string[], deps: ScriptDeps): Pr
   return { lines, exitCode: EXIT_UNRECORDED };
 }
 
+/**
+ * Sentry options for this script. Breadcrumbs are off: with Sentry's default
+ * Console integration every console line becomes a breadcrumb on the next
+ * event, and the line before the operator event is the raw key.
+ */
+export const SCRIPT_SENTRY_OPTIONS = {
+  sendDefaultPii: false,
+  maxBreadcrumbs: 0,
+  beforeBreadcrumb: () => null,
+} as const;
+
+/**
+ * The script's printer: straight to stdout, not through `console`, which
+ * Sentry instruments. Breadcrumbs are off as well; either alone keeps the key
+ * out of an event.
+ */
+export function printLine(line: string): void {
+  process.stdout.write(`${line}\n`);
+}
+
 async function main(): Promise<void> {
-  initSentry(process.env.SENTRY_DSN, process.env.NODE_ENV ?? 'development');
+  const dsn = process.env.SENTRY_DSN;
+  if (dsn) Sentry.init({ dsn, environment: process.env.NODE_ENV ?? 'development', ...SCRIPT_SENTRY_OPTIONS });
   const { exitCode } = await serviceKeys(process.argv.slice(2), {
     databaseUrl: process.env.DATABASE_URL,
     connect: () => {
@@ -555,7 +575,7 @@ async function main(): Promise<void> {
       return { db, auth: createAuth(db) };
     },
     recorder: sentryRecorder,
-    print: (line) => console.log(line),
+    print: printLine,
   });
   process.exit(exitCode);
 }

@@ -245,4 +245,9 @@ This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under 
   ```
 
 - **Review iteration 1 (Codex, REQUEST_CHANGES):** the first version buffered every line and printed them after the run, so the database host reached the screen only after the write. Each line is now printed as it is produced, and the host line is printed before the script connects. The per-subcommand host test asserts the call order (`print` before `connect`). Restoring the buffered printing turns 6 tests red. The Gemini lane was skipped (its CLI exited 3).
-- Green per package: `@ansari/auth` 220 + 1 skipped (the `DEPLOYED_THROUGH` parity check, pending the rebase), `ansari-auth` 336, `ansari-api` 1113 + 3 skipped. Root typecheck and lint pass.
+- **Review iteration 2 (Codex, REQUEST_CHANGES): the raw key could reach Sentry as a breadcrumb.** The script used `initSentry` with Sentry's default integrations and printed with `console.log`. The Console integration records every console line as a breadcrumb, and the breadcrumb trail rides on the next event. The line printed just before the operator event is the raw key. The original test turned default integrations off, and that hid the leak.
+  - Fixed two ways, each enough on its own. The script now has its own Sentry options (`SCRIPT_SENTRY_OPTIONS`: `maxBreadcrumbs: 0`, `beforeBreadcrumb` returns null), and it prints through `process.stdout.write`, which Sentry does not instrument.
+  - New test, `apps/auth/tests/service-keys-sentry.test.ts`. Default integrations stay ON; only the transport is a spy. The test runs create-key once with the script's printer and once printing through `console.log`.
+  - Negative test: with the breadcrumb options removed, the `console.log` case leaks the key and goes red, and the stdout case still passes. So Codex's leak was real, and either guard alone stops it.
+  - Lesson: a Sentry test with `defaultIntegrations: false` cannot show what production Sentry sends.
+- Green per package: `@ansari/auth` 220 + 1 skipped (the `DEPLOYED_THROUGH` parity check, pending the rebase), `ansari-auth` 338 (after iteration 2), `ansari-api` 1113 + 3 skipped. Root typecheck and lint pass.
