@@ -34,9 +34,35 @@ export type FailedSignInAlert = {
 
 export const FAILED_SIGN_IN_MESSAGE = 'auth: failed sign-ins over the alert threshold, every email together (spray?)';
 
+/**
+ * Sentry's request-data integration attaches the in-flight request (headers,
+ * cookies, query string and body) to every event raised while it is handled:
+ * a sign-in's email and password, a bearer. `sendDefaultPii: false` does not
+ * cover bodies or the Authorization header, so every event keeps only the
+ * request's method and path.
+ */
+export function scrubRequestEvent<E extends Sentry.Event>(event: E): E {
+  const request = event.request;
+  if (!request) return event;
+  event.request = { method: request.method, url: request.url?.split('?')[0] };
+  return event;
+}
+
+/**
+ * The service's Sentry options beside the DSN and environment; tests add only a transport.
+ * Breadcrumbs are off: an HTTP breadcrumb carries its request's query string,
+ * and a console breadcrumb carries whatever the log line held.
+ */
+export const SERVICE_SENTRY_OPTIONS = {
+  sendDefaultPii: false,
+  maxBreadcrumbs: 0,
+  beforeBreadcrumb: () => null,
+  beforeSend: scrubRequestEvent,
+} as const;
+
 export function initSentry(dsn: string | undefined, environment: string): void {
   if (!dsn) return;
-  Sentry.init({ dsn, environment, sendDefaultPii: false });
+  Sentry.init({ dsn, environment, ...SERVICE_SENTRY_OPTIONS });
 }
 
 /** One Sentry event (plus a log line with the same fields). */
