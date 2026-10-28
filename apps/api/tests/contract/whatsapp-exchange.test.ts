@@ -40,7 +40,9 @@ beforeAll(async () => {
   app = await migrateAppDb();
   h.db = appDrizzle(app);
   const serviceUser = await serviceUsers.createServiceUser(service.db, 'whatsapp');
-  // As the service-keys script creates it (no per-key window in a test).
+  // A `whatsapp: mint` key for the WhatsApp service user, with the script's prefix and
+  // permission but no rate limit (so `requestCount` never moves) and no budget: this test
+  // proves the token path, not the key's limits.
   ({ key } = await service.auth.api.createApiKey({
     body: {
       userId: serviceUser.id,

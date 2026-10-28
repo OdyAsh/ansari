@@ -193,14 +193,18 @@ export const WHATSAPP_KEY_BOUNDS = {
 /** A session the exchange signs from must outlive the token's `exp` by at least this much. */
 export const SESSION_MARGIN = 5 * 60 * SECOND_MS;
 
-/** The exchange's `lock_timeout`: a held user row fails one request, not the pool. */
+/**
+ * The exchange's `lock_timeout`: a held user row fails one request, not the pool.
+ * Owned by `apps/auth/scripts/probes/exchange-outage-probe.ts` (real Postgres):
+ * pglite has one connection and cannot hold a lock from another.
+ */
 export const EXCHANGE_LOCK_TIMEOUT = 2 * SECOND_MS;
 
 /** The exchange's `statement_timeout`, for any slow statement in its transaction. */
 export const EXCHANGE_STATEMENT_TIMEOUT = 5 * SECOND_MS;
 
 // The WhatsApp exchange route (spec 329). The alert numbers are ALERTS, never
-// caps: each sends one Sentry event (counts, windows, hash prefixes) and
+// caps: each sends one Sentry event (key ids, counts, windows) and
 // refuses nothing. They sit well below the key's own caps, so a surge is seen
 // before anything is refused.
 
@@ -208,7 +212,9 @@ export const EXCHANGE_STATEMENT_TIMEOUT = 5 * SECOND_MS;
  * How long a successful `auth.apikey` relation check is trusted, in ms. Every
  * plugin refusal runs the check, so an outage the plugin reports as an unknown
  * key is a 500, not a 401; this bounds that cost under an unknown-key flood,
- * and is also the length of the misclassification residual.
+ * and is also the length of the misclassification residual. Its outage
+ * behaviour is owned by `apps/auth/scripts/probes/exchange-outage-probe.ts`
+ * (database stopped under a production-mode service).
  */
 export const APIKEY_RELATION_CHECK_TTL = 5 * SECOND_MS;
 

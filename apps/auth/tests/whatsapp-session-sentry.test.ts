@@ -36,7 +36,40 @@ afterAll(async () => {
   await service?.close();
 });
 
+const post = (key: string, body: unknown) =>
+  fetch(`${service.publicUrl}${WHATSAPP_SESSION_PATH}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
 describe('Sentry events from the exchange', () => {
+  // Runs first: the next case removes the whatsapp service user's `service` row.
+  it("carry no ineligible user's id (the log line names it; no console breadcrumb rides on the alert)", async () => {
+    const owner = await serviceUsers.createServiceUser(service.db, 'whatsapp');
+    const { key } = await service.auth.api.createApiKey({
+      body: { userId: owner.id, prefix: 'wa_', permissions: { whatsapp: ['mint'] }, rateLimitEnabled: false },
+    });
+    const bsuid = 'US.27182818284590452353';
+    const first = await post(key, { bsuid });
+    expect(first.status).toBe(200);
+    const { token } = (await first.json()) as { token: string };
+    const sub = (JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString()) as { sub: string }).sub;
+    // Promoted to admin: the next exchange is ineligible (500), logs the id and raises the alert.
+    await service.client.query(`update auth.users set role = 'admin' where id = $1`, [sub]);
+    envelopes.length = 0;
+    expect((await post(key, { bsuid })).status).toBe(500);
+    await Sentry.flush(2000);
+
+    const serialized = JSON.stringify(envelopes);
+    expect(serialized).toContain('ineligible-user');
+    for (const needle of [sub, bsuid, key, key.slice(3, 20), token]) {
+      expect(serialized).not.toContain(needle);
+    }
+    // Leave the service user as the next case expects to create it: gone.
+    await service.client.query('delete from auth.users where id = $1 or id = $2', [owner.id, sub]);
+  });
+
   it('carry no body, Authorization header, BSUID, phone number or key', async () => {
     // A key whose owner has lost its `service` row: the route raises the
     // service-user alert while the request (with its body) is in flight.

@@ -45,8 +45,13 @@ export { WHATSAPP_SESSION_PATH };
 const SERVICE = 'whatsapp';
 const REQUIRED_PERMISSIONS = { whatsapp: [...serviceUsers.SERVICES.whatsapp.permissions.whatsapp] };
 
-/** A non-empty string of at most 256 characters, with no whitespace or control character (sanity bounds only; spec 329 item 9). */
-const BSUID = /^[^\s\p{Cc}]{1,256}$/u;
+/**
+ * A non-empty string of at most 256 characters, with no whitespace, control
+ * character or format character (zero-width, bidi overrides): sanity bounds
+ * only (spec 329 item 9). A format character would let two BSUIDs that look
+ * identical name two users.
+ */
+const BSUID = /^[^\s\p{Cc}\p{Cf}]{1,256}$/u;
 /** Digits with an optional leading `+`, at most 32 characters. */
 const PHONE = /^\+?[0-9]+$/;
 const PHONE_MAX = 32;
@@ -66,7 +71,9 @@ const KEY_REFUSAL_CODES: readonly string[] = ['USAGE_EXCEEDED', 'RATE_LIMITED'] 
 function bearerOf(req: Request): string | null {
   const header = req.headers.authorization;
   if (typeof header !== 'string') return null;
-  const match = /^Bearer ([^\s]+)$/.exec(header);
+  // The scheme is case-insensitive (RFC 7235 §2.1): a client's `bearer` must
+  // not get the 401 a revoked key gets.
+  const match = /^Bearer ([^\s]+)$/i.exec(header);
   return match?.[1] ?? null;
 }
 
@@ -185,6 +192,13 @@ export function whatsappRouter({ auth, db }: ServiceDeps, options: ExchangeOptio
         case 'user-gone':
           internalError(res);
           return;
+        default: {
+          // A new outcome kind fails to compile here, and answers 500 rather than hanging.
+          const unhandled: never = outcome;
+          void unhandled;
+          internalError(res);
+          return;
+        }
       }
     } catch (err) {
       fail(res, err);

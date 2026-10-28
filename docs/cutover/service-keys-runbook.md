@@ -164,9 +164,12 @@ same-named constraint elsewhere cannot answer `t`.
 
 ## Alerts
 
-Every exchange alert is one Sentry event with counts, windows and key-hash prefixes only (never
-a key, a BSUID, a phone number or a user id); each fires at most once per window
-(`EXCHANGE_ALERT_WINDOW`, 5 minutes) and refuses nothing.
+Every exchange alert is one Sentry event with key ids, counts, thresholds and windows only
+(never a key, a BSUID, a phone number or a user id); each fires at most once per window
+(`EXCHANGE_ALERT_WINDOW`, 5 minutes) and refuses nothing. A per-key alert carries `keyId`, the
+id `list` prints, so match it there. The other kinds mark the **first** occurrence (or the
+threshold crossing) in their window and carry no count: see Sentry's event volume, or the server
+log, for how many followed.
 
 | `kind` | Means | Do |
 |---|---|---|

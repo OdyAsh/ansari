@@ -97,6 +97,8 @@ Owner phase per the plan's criterion table. Where the plan named a test, that te
 - **Review phase (security architect):** an explicit `"phone_number": null` is now accepted as absent (200, a stored number untouched) instead of 400. The contract calls the field optional, and JSON clients commonly send `null` for an absent field. The spec's request row is amended, `docs/self-hosting.md` says so, and the body tests swap the 400 case for a 200 case (red without the route change).
 - **Review phase (gitleaks):** the probes' invented placeholder secrets are gone. `setProbeEnv` now calls `setAuthEnv` and overrides only `DATABASE_URL`, so the probes print the test issuer and audience (`auth.test.example`, `ansari-api-test`), not the `probe` ones shown in the appendix's earlier runs. The two literals stay in branch history, so `.gitleaks.toml` allowlists them as adjudicated fixtures (the run is under "Secret scan (gitleaks)" below).
 
+- **Review phase (security architect, PR-gate pass 2):** **service-wide, Sentry keeps no breadcrumbs.** `SERVICE_SENTRY_OPTIONS` now sets `maxBreadcrumbs: 0` and `beforeBreadcrumb: () => null` for all of apps/auth, not only the exchange. Nothing relies on breadcrumbs, and the ineligible-user log line (a user id) otherwise rode on the alert as a console breadcrumb. Per-key alerts carry the key id (`keyId`, as `list` prints it) instead of an 8-character hash prefix: a key id names a credential, not a person. The fire-once alerts lose their count fields (always 1 or the threshold), and the runbook says they mark the first occurrence in the window. `hashPrefix` was removed as unused.
+
 ### Accepted residuals
 
 - **The eligibility read of account rows is not serialized against a concurrent insert of a second account row for the same user** (security architect, review phase). An account insert takes `KEY SHARE` on its user row, which `FOR NO KEY UPDATE` does not block, so a second row committed during the exchange's transaction is not seen by that exchange. No Better Auth path can create an account row for a noreply user (the create hook and every public path refuse the domain), so only an operator can write one. The next exchange reads it under the lock and refuses with `ineligible: accounts`, raising the alert, so the window is one exchange and its token (at most 15 minutes, `{sub, sid}` only, carrying no authority beyond that WhatsApp user's own).
@@ -190,6 +192,19 @@ Round 2: Codex APPROVE.
 
 #### Codex (COMMENT)
 - **Concern**: the runbook's post-apply check matched the constraint by name only, so a same-named constraint elsewhere could answer `t` → **Addressed**: the query is now the boot check's own (`auth.account`, `contype = 'u'`, columns in order). Run against Postgres 18 with the journal applied: `t|t`; with the constraint moved to `auth.decoy`: `t|f`; with the columns reversed: `t|f`.
+
+### PR gate, security architect pass 2 (route, alerts, apps/api, docs; two external reviewers read against the tree)
+- **Q1 (blocking)**: an ineligible user's id reached Sentry as a console breadcrumb, because the service init kept the default Console integration → **Addressed**: breadcrumbs off service-wide. New case in `whatsapp-session-sentry.test.ts`: the user is promoted to admin, the exchange answers 500, and neither the user id, the BSUID, the key nor the token is in any envelope. Negative control: with the two options removed, the case goes red on the user id.
+- **Q2**: hash prefixes in per-key alerts are not actionable → **Addressed**: the alerts carry `keyId`; the runbook says to match it against `list`.
+- **Q3**: the outcome switch had no default → **Addressed**: a `never` default that answers 500.
+- **Q4**: `/health` logged only `err.name` → **Addressed**: it logs `redactError`'s `{name, code}`, asserted in the recovery test.
+- **Q5**: confirm the runbook's constraint query at the tip → confirmed (`auth.account`, `contype = 'u'`, ordered columns).
+- **Q6**: the Bearer scheme should be case-insensitive (RFC 7235) → **Addressed**: tests for `bearer`, `BEARER` and `BeArEr` (all 3 red without the flag).
+- **Q7**: format characters in a BSUID → **Addressed**: `\p{Cf}` excluded; zero-width space, zero-width joiner and bidi override give 400 (all 3 red without it).
+- **Q8**: fire-once alerts carried counts that are always 1 or the threshold → **Addressed**: fields dropped; the runbook's alert section says what the event marks.
+- **Q9**: comments on `EXCHANGE_LOCK_TIMEOUT` and `APIKEY_RELATION_CHECK_TTL` name `exchange-outage-probe.ts` → **Addressed**.
+- **Q10**: the contract test's key comment was wrong → **Addressed** (no rate limit, so `requestCount` never moves).
+- Verified: apps/auth 441/441; `whatsapp-session`, `whatsapp-session-sentry` and `boot` 92/92; doc tests 117; typecheck and lint clean. CI on 4495396 (before this pass) passed all four jobs: gitleaks, frontend, auth and api.
 
 ## Lessons Learned
 

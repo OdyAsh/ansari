@@ -16,7 +16,6 @@ import { limits, serviceUsers } from '@ansari/auth';
 import { TEST_JWT_AUDIENCE, TEST_JWT_ISSUER } from '../../../packages/auth/tests/helpers/auth-db';
 import {
   createExchangeAlerts,
-  hashPrefix,
   INELIGIBLE_USER_MESSAGE,
   scrubExchangeEvent,
   type ExchangeAlert,
@@ -329,6 +328,11 @@ describe('the exchange', () => {
     expect(rows[0]?.phone_number).toBe(phone);
   });
 
+  it.each(['bearer', 'BEARER', 'BeArEr'])('the %s scheme is the Bearer scheme (RFC 7235: case-insensitive)', async (scheme) => {
+    const res = await post({ bsuid: newBsuid() }, { authorization: `${scheme} ${key}` });
+    expect(res.status, res.text).toBe(200);
+  });
+
   it('a phone number with a leading + is accepted', async () => {
     expect((await exchange(newBsuid(), remember(`+${digits(12)}`))).status).toBe(200);
   });
@@ -449,7 +453,7 @@ describe('failures that are not 401', () => {
       subs.push(sub);
     }
     const fired = alertsOf('ineligible-user').slice(sent);
-    expect(fired).toEqual([{ kind: 'ineligible-user', users: 1, windowSeconds: limits.EXCHANGE_ALERT_WINDOW }]);
+    expect(fired).toEqual([{ kind: 'ineligible-user', windowSeconds: limits.EXCHANGE_ALERT_WINDOW }]);
     for (const sub of subs) {
       expect(logged.some(([message, meta]) => message === INELIGIBLE_USER_MESSAGE && (meta as { userId?: string })?.userId === sub)).toBe(true);
     }
@@ -544,6 +548,9 @@ describe('the body (after a valid key)', () => {
     ['bsuid with a space', '{"bsuid":"US. 123"}', 'application/json'],
     ['bsuid with a tab', '{"bsuid":"US.\\t123"}', 'application/json'],
     ['bsuid with a control character', '{"bsuid":"US.\\u0001123"}', 'application/json'],
+    ['bsuid with a zero-width space', '{"bsuid":"US.\\u200b123"}', 'application/json'],
+    ['bsuid with a bidi override', '{"bsuid":"US.\\u202e123"}', 'application/json'],
+    ['bsuid with a zero-width joiner', '{"bsuid":"US.\\u200d123"}', 'application/json'],
     ['phone_number not a string', '{"bsuid":"US.1","phone_number":15551234567}', 'application/json'],
     ['phone_number empty', '{"bsuid":"US.1","phone_number":""}', 'application/json'],
     ['phone_number over 32 characters', JSON.stringify({ bsuid: 'US.1', phone_number: '1'.repeat(33) }), 'application/json'],
@@ -623,7 +630,7 @@ describe('transport', () => {
 });
 
 describe('alerts', () => {
-  it('per-key window volume: one alert at WHATSAPP_EXCHANGE_KEY_ALERT, counts and a hash prefix only', async () => {
+  it('per-key window volume: one alert at WHATSAPP_EXCHANGE_KEY_ALERT, counts and the key id only', async () => {
     const id = (await service.auth.api.createApiKey({
       body: {
         userId: serviceUserId,
@@ -644,7 +651,7 @@ describe('alerts', () => {
     expect(alertsOf('key-window-volume').slice(sent)).toEqual([
       {
         kind: 'key-window-volume',
-        keyHash: hashPrefix(id.id),
+        keyId: id.id,
         requests: limits.WHATSAPP_EXCHANGE_KEY_ALERT,
         windowSeconds: 60,
         threshold: limits.WHATSAPP_EXCHANGE_KEY_ALERT,
@@ -675,7 +682,7 @@ describe('alerts', () => {
     expect(alertsOf('key-daily-volume').slice(sent)).toEqual([
       {
         kind: 'key-daily-volume',
-        keyHash: hashPrefix(created.id),
+        keyId: created.id,
         requests: limits.WHATSAPP_EXCHANGE_DAILY_ALERT,
         threshold: limits.WHATSAPP_EXCHANGE_DAILY_ALERT,
       },
@@ -689,17 +696,17 @@ describe('alerts', () => {
       const sent = alertsOf('unauthorized-volume').length;
       for (let i = 0; i < max + 5; i++) expect((await post({}, { bearer: null })).status).toBe(401);
       expect(alertsOf('unauthorized-volume').slice(sent)).toEqual([
-        { kind: 'unauthorized-volume', unauthorized: max, windowSeconds: limits.EXCHANGE_ALERT_WINDOW, threshold: max },
+        { kind: 'unauthorized-volume', windowSeconds: limits.EXCHANGE_ALERT_WINDOW, threshold: max },
       ]);
     }
   });
 
-  it('every alert carries numbers, its kind, a refusal code or a hash prefix, and nothing else', () => {
+  it('every alert carries numbers, its kind, a refusal code or a key id, and nothing else', () => {
     expect(alerts.length).toBeGreaterThan(0);
     for (const alert of alerts) {
       for (const [field, value] of Object.entries(alert)) {
         if (field === 'kind') continue;
-        if (field === 'keyHash') expect(value).toMatch(/^[0-9a-f]{8}$/);
+        if (field === 'keyId') expect(value).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
         else if (field === 'code') expect(['USAGE_EXCEEDED', 'RATE_LIMITED']).toContain(value);
         else expect(typeof value, field).toBe('number');
       }

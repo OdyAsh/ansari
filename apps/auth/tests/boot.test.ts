@@ -138,6 +138,8 @@ describe('the database unreachable at boot', () => {
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/health`;
     try {
       expect((await fetch(url)).status).toBe(503);
+      // {name, code} only, as boot and the exchange log it: no message (it names the host).
+      expect(errors.at(-1)).toEqual(['health: auth database unreachable', { name: 'Error', code: 'ECONNREFUSED' }]);
       state.down = false;
       const res = await fetch(url);
       expect(res.status).toBe(200);

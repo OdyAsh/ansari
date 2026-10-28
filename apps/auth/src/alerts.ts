@@ -3,12 +3,11 @@
 // walking an email list. The event carries counts and 8-character prefixes of
 // the email hashes, never an email.
 //
-// The WhatsApp exchange's alerts (spec 329) keep the same posture: counts,
-// windows and hash prefixes in the Sentry event, never a personal identifier.
-// The one operator-actionable id, an ineligible user's, goes only in a server
-// log line.
-import { createHash } from 'node:crypto';
-
+// The WhatsApp exchange's alerts (spec 329) keep the same posture: no personal
+// identifier in a Sentry event. A per-key alert names the key by its id (a
+// plugin-made UUID that identifies a credential, not a person, and that `list`
+// prints), so the operator can act on it. The one personal id an operator
+// needs, an ineligible user's, goes only in a server log line.
 import { limits } from '@ansari/auth';
 import * as Sentry from '@sentry/node';
 
@@ -58,8 +57,19 @@ export function scrubExchangeEvent<E extends Sentry.Event>(event: E): E {
   return event;
 }
 
-/** The service's Sentry options beside the DSN and environment; tests add only a transport. */
-export const SERVICE_SENTRY_OPTIONS = { sendDefaultPii: false, beforeSend: scrubExchangeEvent } as const;
+/**
+ * The service's Sentry options beside the DSN and environment; tests add only a transport.
+ * No breadcrumbs, service-wide: the Console integration records every `console`
+ * line as a breadcrumb that rides on the next event, so the ineligible-user log
+ * line (a user id) would reach Sentry with that alert. Nothing here relies on
+ * breadcrumbs (as `SCRIPT_SENTRY_OPTIONS` for the scripts).
+ */
+export const SERVICE_SENTRY_OPTIONS = {
+  sendDefaultPii: false,
+  maxBreadcrumbs: 0,
+  beforeBreadcrumb: () => null,
+  beforeSend: scrubExchangeEvent,
+} as const;
 
 export function initSentry(dsn: string | undefined, environment: string): void {
   if (!dsn) return;
@@ -86,18 +96,24 @@ export function sendListWalkAlert(alert: ListWalkAlert): void {
   });
 }
 
-/** Every exchange alert, as Sentry receives it: counts, windows and hash prefixes only. */
+/**
+ * Every exchange alert, as Sentry receives it: key ids, counts, thresholds and
+ * windows only. The fire-once kinds (`key-refused`, `unauthorized-volume`,
+ * `ineligible-user`, `service-user-unresolvable`) mark the first occurrence (or
+ * the threshold crossing) in their window and carry no count of their own: a
+ * count read at the moment of firing is always 1 or the threshold.
+ */
 export type ExchangeAlert =
   /** A key's exchanges in its current rate-limit window reached WHATSAPP_EXCHANGE_KEY_ALERT. */
-  | { kind: 'key-window-volume'; keyHash: string; requests: number; windowSeconds: number; threshold: number }
+  | { kind: 'key-window-volume'; keyId: string; requests: number; windowSeconds: number; threshold: number }
   /** A key's exchanges since its last daily refill reached WHATSAPP_EXCHANGE_DAILY_ALERT. */
-  | { kind: 'key-daily-volume'; keyHash: string; requests: number; threshold: number }
+  | { kind: 'key-daily-volume'; keyId: string; requests: number; threshold: number }
   /** The plugin refused a key for its budget (USAGE_EXCEEDED) or its window (RATE_LIMITED); the caller saw a 401. */
-  | { kind: 'key-refused'; code: KeyRefusalCode; refusals: number; windowSeconds: number }
+  | { kind: 'key-refused'; code: KeyRefusalCode; windowSeconds: number }
   /** 401s reached EXCHANGE_UNAUTHORIZED_ALERT in one window. */
-  | { kind: 'unauthorized-volume'; unauthorized: number; windowSeconds: number; threshold: number }
+  | { kind: 'unauthorized-volume'; windowSeconds: number; threshold: number }
   /** A user behind a `whatsapp` row may not get a token; the user id is in the server log only. */
-  | { kind: 'ineligible-user'; users: number; windowSeconds: number }
+  | { kind: 'ineligible-user'; windowSeconds: number }
   /** The WhatsApp service user is missing or not unique: every exchange is a 500. */
   | { kind: 'service-user-unresolvable'; serviceUsers: number; windowSeconds: number };
 
@@ -135,11 +151,6 @@ export type ExchangeAlerts = {
   serviceUserUnresolvable(serviceUsers: number): void;
 };
 
-/** First 8 hex characters of sha256(value), as the other alerts identify an email. */
-export function hashPrefix(value: string): string {
-  return createHash('sha256').update(value).digest('hex').slice(0, 8);
-}
-
 export const INELIGIBLE_USER_MESSAGE = 'whatsapp exchange: ineligible user refused (repair per the service-keys runbook)';
 
 export type ExchangeAlertOptions = {
@@ -162,7 +173,7 @@ export function createExchangeAlerts({ send = sendExchangeAlert, now = Date.now 
   const windows = new Map<string, { start: number; count: number; fired: boolean }>();
 
   /** Count one event in `name`'s fixed window; true the first time the count reaches `threshold`. */
-  function tally(name: string, threshold: number): number | null {
+  function tally(name: string, threshold: number): boolean {
     const at = now();
     let window = windows.get(name);
     if (!window || at - window.start >= windowMs) {
@@ -170,16 +181,15 @@ export function createExchangeAlerts({ send = sendExchangeAlert, now = Date.now 
       windows.set(name, window);
     }
     window.count += 1;
-    if (window.fired || window.count < threshold) return null;
+    if (window.fired || window.count < threshold) return false;
     window.fired = true;
-    return window.count;
+    return true;
   }
 
   const windowSeconds = limits.EXCHANGE_ALERT_WINDOW;
 
   return {
     keyVerified(key) {
-      const keyHash = hashPrefix(key.id);
       const keyWindowMs = key.rateLimitTimeWindow ?? 0;
       const firedAt = keyWindowFiredAt.get(key.id);
       if (
@@ -189,7 +199,7 @@ export function createExchangeAlerts({ send = sendExchangeAlert, now = Date.now 
         keyWindowFiredAt.set(key.id, now());
         send({
           kind: 'key-window-volume',
-          keyHash,
+          keyId: key.id,
           requests: key.requestCount,
           windowSeconds: keyWindowMs / 1000,
           threshold: limits.WHATSAPP_EXCHANGE_KEY_ALERT,
@@ -200,25 +210,22 @@ export function createExchangeAlerts({ send = sendExchangeAlert, now = Date.now 
       const period = new Date(key.lastRefillAt ?? key.createdAt).toISOString();
       if (used >= limits.WHATSAPP_EXCHANGE_DAILY_ALERT && keyDailyFiredFor.get(key.id) !== period) {
         keyDailyFiredFor.set(key.id, period);
-        send({ kind: 'key-daily-volume', keyHash, requests: used, threshold: limits.WHATSAPP_EXCHANGE_DAILY_ALERT });
+        send({ kind: 'key-daily-volume', keyId: key.id, requests: used, threshold: limits.WHATSAPP_EXCHANGE_DAILY_ALERT });
       }
     },
     keyRefused(code) {
-      const refusals = tally(`refused:${code}`, 1);
-      if (refusals !== null) send({ kind: 'key-refused', code, refusals, windowSeconds });
+      if (tally(`refused:${code}`, 1)) send({ kind: 'key-refused', code, windowSeconds });
     },
     unauthorized() {
       const { max } = limits.EXCHANGE_UNAUTHORIZED_ALERT;
-      const unauthorized = tally('unauthorized', max);
-      if (unauthorized !== null) send({ kind: 'unauthorized-volume', unauthorized, windowSeconds, threshold: max });
+      if (tally('unauthorized', max)) send({ kind: 'unauthorized-volume', windowSeconds, threshold: max });
     },
     ineligibleUser(userId, reason) {
       console.warn(INELIGIBLE_USER_MESSAGE, { userId, reason });
-      const users = tally('ineligible', 1);
-      if (users !== null) send({ kind: 'ineligible-user', users, windowSeconds });
+      if (tally('ineligible', 1)) send({ kind: 'ineligible-user', windowSeconds });
     },
     serviceUserUnresolvable(serviceUsers) {
-      if (tally('service-user', 1) !== null) send({ kind: 'service-user-unresolvable', serviceUsers, windowSeconds });
+      if (tally('service-user', 1)) send({ kind: 'service-user-unresolvable', serviceUsers, windowSeconds });
     },
   };
 }
