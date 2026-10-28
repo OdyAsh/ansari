@@ -467,6 +467,22 @@ describe('the service-keys runbook (spec 329)', () => {
     expect(section('Limits')).toContain('`update-limits`');
   });
 
+  it("gives the script's accepted ranges as WHATSAPP_KEY_BOUNDS defines them", () => {
+    const { rateLimitMax, rateLimitTimeWindow, refillAmount } = limits.WHATSAPP_KEY_BOUNDS;
+    const n = (v: number) => v.toLocaleString('en-US');
+    const rows = [...section('Limits').matchAll(/^\| `(--[a-z-]+)` \| ([^|]+) \|$/gm)].map((m) => [m[1], m[2]]);
+    expect(rows).toEqual([
+      ['--rate-max', `${n(rateLimitMax.min)} to ${n(rateLimitMax.max)}`],
+      [
+        '--rate-window',
+        `1 second to 24 hours (${n(rateLimitTimeWindow.min / 1000)} to ${n(rateLimitTimeWindow.max / 1000)} seconds)`,
+      ],
+      ['--daily', `${n(refillAmount.min)} to ${n(refillAmount.max)}`],
+    ]);
+    expect(rateLimitTimeWindow.min).toBe(1000);
+    expect(rateLimitTimeWindow.max).toBe(24 * 60 * 60 * 1000);
+  });
+
   it('gives the pre-apply duplicate check and the lock it must plan for', () => {
     const before = section('Before `0001`: the duplicate check');
     expect(before).toMatch(/group by provider_id, account_id\s+having count\(\*\) > 1;/);

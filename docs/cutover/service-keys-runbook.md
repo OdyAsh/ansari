@@ -105,8 +105,16 @@ These values are **judgement, not measurement** (owner decision 3): the legacy s
 traffic was not available to size them. The alerts sit at one third of the key's caps, so a
 real surge is seen well before anything is refused. To change a key's values, use
 `update-limits` (no code change, no deploy), or rotate with new values and revoke the old key.
-The script's accepted bounds (`WHATSAPP_KEY_BOUNDS`) are wide on purpose, so a raise never
-needs a code change; a per-user limit change does (`limits.ts`).
+The script's accepted bounds (`WHATSAPP_KEY_BOUNDS`, inclusive) are wide on purpose, so a
+raise never needs a code change; a per-user limit change does (`limits.ts`):
+
+| Flag | Accepted |
+|---|---|
+| `--rate-max` | 1 to 100,000 |
+| `--rate-window` | 1 second to 24 hours (1 to 86,400 seconds) |
+| `--daily` | 1 to 10,000,000 |
+
+A value outside them is refused with nothing written.
 
 ## Before `0001`: the duplicate check
 

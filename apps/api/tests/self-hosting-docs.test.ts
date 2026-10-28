@@ -69,7 +69,12 @@ describe('self-hosting docs: service keys and the WhatsApp exchange (spec 329)',
     expect(initial.refillAmount).toBe(3000);
     const perUser = limits.WHATSAPP_EXCHANGE_PER_USER;
     expect(section).toContain(`(\`WHATSAPP_EXCHANGE_PER_USER\`: ${perUser.max} per\n${perUser.window / 60} minutes)`);
-    expect(Object.keys(limits)).toContain('WHATSAPP_KEY_BOUNDS');
+    const { rateLimitMax, rateLimitTimeWindow, refillAmount } = limits.WHATSAPP_KEY_BOUNDS;
+    expect([rateLimitTimeWindow.min, rateLimitTimeWindow.max]).toEqual([1000, 24 * 60 * 60 * 1000]);
+    const n = (v: number) => v.toLocaleString('en-US');
+    expect(section).toContain(
+      `(\`WHATSAPP_KEY_BOUNDS\`, inclusive: \`--rate-max\` ${n(rateLimitMax.min)} to ${n(rateLimitMax.max)}, \`--rate-window\` 1 second to\n24 hours, \`--daily\` ${n(refillAmount.min)} to ${n(refillAmount.max)})`
+    );
   });
 
   it('puts migration 0001 before the code, which refuses to boot without it', () => {

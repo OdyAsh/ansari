@@ -251,7 +251,8 @@ other, and the app row is created on first use.
 
 The bounds live in `packages/auth/src/limits.ts`: the key's initial values
 (`WHATSAPP_KEY_INITIAL`: 60 per minute, 3,000 a day), the range the script accepts
-(`WHATSAPP_KEY_BOUNDS`), the per-user exchange budget (`WHATSAPP_EXCHANGE_PER_USER`: 6 per
+(`WHATSAPP_KEY_BOUNDS`, inclusive: `--rate-max` 1 to 100,000, `--rate-window` 1 second to
+24 hours, `--daily` 1 to 10,000,000), the per-user exchange budget (`WHATSAPP_EXCHANGE_PER_USER`: 6 per
 15 minutes), the exchange's lock and statement timeouts and body limit, and the alert
 thresholds. There is no new environment variable.
 
