@@ -178,13 +178,15 @@ No response contains the bearer, the BSUID, the phone number or any part of the 
      - the token is never returned, logged or sent to Sentry.
 
      `internalAdapter.createSession` inside better-auth's `runWithTransaction` is the alternative, if the plan's real-Postgres probe prefers it. Either way, the session write shares the locking transaction.
-   - **Sign** with the jwt plugin's server-side `auth.api.signJWT`, passing `{sub, sid, iat, exp}` explicitly, the same `exp` the session was checked against. That keeps the comparison non-circular. It also matters because `signJWT` sets `iat` only when the caller passes it, while `/api/auth/token` goes through `getJwtToken`, which injects `iat` and applies `definePayload`. The exchange's claim set must equal `/token`'s.
-   - **Commit**, then return the token.
+   - **Commit.**
+6. **Sign, after the commit**, with the jwt plugin's server-side `auth.api.signJWT`, passing `{sub, sid, iat, exp}` explicitly: the same `iat` and `exp` the session was checked against under the lock. That keeps the comparison non-circular. It also matters because `signJWT` sets `iat` only when the caller passes it, while `/api/auth/token` goes through `getJwtToken`, which injects `iat` and applies `definePayload`. The exchange's claim set must equal `/token`'s. A signing failure → 500; the session stays and is reused next time. Then return the token.
 
-   The ban re-read, the phone update, the session write and the signing run in that one transaction, so a ban, deletion or promotion that commits first is always honoured. A session written directly must be indistinguishable from one better-auth wrote: the bearer plugin, `/api/account/me`'s live-`sid` check and revocation all treat it as their own. Tests read it back through better-auth.
+   *Amended in implementation (security architect, 2026-10-28):* an earlier draft had signing inside the transaction. It moved out in plan iteration 2 (security review P1): `signJWT` reads `jwks` through the shared pool, so inside the transaction each exchange would hold one connection while waiting for a second. On real Postgres with a pool of 2, 10 concurrent exchanges then hang with no connect timeout, or fail loudly with one, while signing after the commit finishes 10/10 (probe 4, steps E1 and E2, output in `codev/reviews/329-*.md`).
+
+   The ban re-read, the eligibility check, the phone update and the session write run in that one transaction, so a ban, deletion or promotion that commits first is always honoured. One that commits between the commit and the signature is the same case as one just after signing (below): a ban or deletion leaves a dead `sid` that fails apps/api's first use, and admin authority is never in the token (`role` is read at `/api/account/me` on every request). A session written directly must be indistinguishable from one better-auth wrote: the bearer plugin, `/api/account/me`'s live-`sid` check and revocation all treat it as their own. Tests read it back through better-auth.
    - **`/token` is not used.** Signing bypasses `/token`'s perimeter hook, so `TOKEN_EXCHANGE_PER_SESSION` and its `rate_limit` row do not apply. The per-user budget above replaces them for this route.
 
-The invariant is: **at signing time, the session outlives the token.** A ban, deletion or revocation after signing can still kill the session; the token then fails apps/api's first use, and the consumer re-exchanges once.
+The invariant is: **at signing time, the session outlives the token**: `expiresAt ≥ exp + SESSION_MARGIN` is checked under the lock against the `exp` that is then signed, and a session can only be deleted after the commit, never shortened. A ban, deletion or revocation after the commit can still kill the session; the token then fails apps/api's first use, and the consumer re-exchanges once.
 
 The WhatsApp service caches the token per BSUID for under 15 minutes and calls apps/api with it. apps/api resolves the user on first use exactly as for a web user. **apps/api gains no WhatsApp code** (spec 321 success criterion).
 
@@ -279,7 +281,7 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
   - a forced conflict on `unique(provider_id, account_id)` leaves one user, and both callers get its token;
   - a ban landing between the account lookup and the lock is seen under the lock (403, no session).
 
-  A source-level assertion pins that the eligibility re-read, the ban check, the phone update, the session write and the signing all run inside the transaction that holds `FOR NO KEY UPDATE`, and that `consumeWindow` runs outside it. The plan's real-Postgres probe shows a ban and a session write behave as specified under that lock, each step **under a test deadline** (a red test on timeout, never a hung suite). Concurrent messages for one user are exercised in the staging smoke.
+  A source-level assertion pins that the eligibility re-read, the ban check, the phone update and the session write all run inside the transaction that holds `FOR NO KEY UPDATE`, that `signJWT` runs after it (amended; see §2, step 6), and that `consumeWindow` runs outside it. The plan's real-Postgres probe shows a ban and a session write behave as specified under that lock, each step **under a test deadline** (a red test on timeout, never a hung suite). Concurrent messages for one user are exercised in the staging smoke.
 
 **Exchange: privacy, logging, transport**
 - [ ] No created row (user email and name, session IP and user agent, account, `rate_limit`) contains the BSUID except `account.account_id`.
@@ -364,7 +366,7 @@ Keys come from `@better-auth/api-key` (hashing, permissions, budgets, atomic usa
 - verifies the key and binds its owner;
 - creates the WhatsApp user and account row in its own transaction, the pattern `banUserByEmail` uses;
 - spends the per-user budget on the pool, outside any transaction;
-- in one locking transaction (with lock and statement timeouts): re-reads eligibility and ban, updates the phone number, writes the one session row directly (or through `internalAdapter.createSession` under `runWithTransaction`), and signs with `signJWT`.
+- in one locking transaction (with lock and statement timeouts): re-reads eligibility and ban, updates the phone number, writes the one session row directly (or through `internalAdapter.createSession` under `runWithTransaction`); then, after the commit, signs with `signJWT` (amended; see §2, step 6).
 
 The `user.create.before` hook refuses both reserved domains unconditionally. That is stronger than the issue's "permitted only when the creating context is the exchange or a script", with the same outcome and no context check to get wrong.
 
@@ -442,7 +444,7 @@ A small table of hashed keys with permissions and limits, verified by apps/auth'
 1. `auth.api.createApiKey` from a script context: the key verifies; the raw key is in no column, `start` is null, and `key` equals `defaultKeyHasher(raw)`; `permissions` and `metadata` round-trip.
 2. `auth.api.signJWT` with explicit `{sub, sid, iat, exp}`: the claim set equals a `/api/auth/token` JWT's (with no `iat`, it would differ, per `sign.mjs`). The passed `exp` is honoured, not overridden by the configured lifetime.
 3. The redacted logger: non-error logs survive; error objects are reduced to `{name, code}`.
-4. Real Postgres, every step under a deadline: under `FOR NO KEY UPDATE` on the user, a directly written session row commits without waiting on its own lock; a concurrent ban waits for the exchange, then deletes its session; `lock_timeout` turns a held lock into an error. A directly written session is accepted by the bearer plugin and `/api/account/me`. `signJWT` does no database write, so whether an endpoint invoked through `auth.api` sees the ambient transaction does not matter to it; recorded as a note.
+4. Real Postgres, every step under a deadline: under `FOR NO KEY UPDATE` on the user, a directly written session row commits without waiting on its own lock; a concurrent ban waits for the exchange, then deletes its session; `lock_timeout` turns a held lock into an error. A directly written session is accepted by the bearer plugin and `/api/account/me`. `signJWT` does no database write, but it reads `jwks` through the pool, so it runs after the commit (amended; see §2, step 6). The probe includes pool starvation: signing after the commit finishes, signing inside hangs or fails loudly.
 4a. `returned: false` / `input: false`: `phone_number` is absent from `get-session` and sign-in responses, and ignored when sent to sign-up.
 
 **Functional (pglite: packages/auth and apps/auth suites)**
@@ -468,7 +470,7 @@ A small table of hashed keys with permissions and limits, verified by apps/auth'
 21. Reserved domain: sign-up 409 identical to taken; near misses sign up; reset identical to unknown, mailer not called; hook refusal; sign-in identical to unknown; `grant-admin.ts` refuses noreply; `isSystemAddress` unchanged.
 22. Scripts: no database URL; show without confirm; mismatched confirm; hostname-and-port only (URL with userinfo and query); create prints once; refuses no-refill, out-of-bounds and expiry; list has no secrets; rotate gives two live keys; revoke disables and keeps; Sentry events with no key material.
 23. Refilled budget: exhaust → refused, row kept; past the interval → verifies.
-24. Source-level: the eligibility re-read, ban check, phone update, session write and signing sit inside the `FOR NO KEY UPDATE` transaction.
+24. Source-level: the eligibility re-read, ban check, phone update and session write sit inside the `FOR NO KEY UPDATE` transaction; signing sits after it (amended; see §2, step 6).
 
 **Non-functional**
 25. Log and Sentry capture across 5–23: no raw key, hash, session token, BSUID, phone number or driver error object; Sentry events carry no body or `Authorization`.
@@ -482,7 +484,7 @@ A small table of hashed keys with permissions and limits, verified by apps/auth'
 | Risk | Probability | Impact | Mitigation |
 |------|-------------|--------|------------|
 | A WhatsApp key mints for a non-WhatsApp user (a `whatsapp` row on another user, a promotion, a future social provider) | Low | Critical | Fixed-provider lookup; owner binding; **eligibility under the lock** (sole `whatsapp` row, noreply domain, `registered_via`, not admin), else 500 + alert; `grant-admin.ts` refuses noreply; eligibility matrix tests |
-| Ban or deletion races token issuance | Medium | High | Lock first, re-read under it; session and signing in the same transaction; consumer re-exchanges once on an apps/api 401 |
+| Ban or deletion races token issuance | Medium | High | Lock first, re-read under it; session in the same transaction, signing after its commit against the same `exp`; consumer re-exchanges once on an apps/api 401 |
 | A write waits on the request's own user lock (self-deadlock), or a held lock stalls the shared pool | Low | High | `FOR NO KEY UPDATE`, which does not conflict with a foreign key's `KEY SHARE`; session written in the same transaction; `lock_timeout` and `statement_timeout` make the worst case a 500; real-Postgres probe under deadlines |
 | A session token (30-day bearer credential) leaks | Low | Critical | Better-auth's generator; never returned, logged or sent to Sentry; in the log-capture assertions |
 | An outage or unapplied migration answered as 401 | Medium | High | Relation-level check on every plugin refusal, cached for a named TTL; boot assertion on definite answers only; tests for an absent relation and a stopped database; residual window stated |
