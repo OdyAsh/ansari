@@ -237,11 +237,14 @@ describe('the session and the token', () => {
 
     expect(Object.keys(exchanged.payload).sort()).toEqual(Object.keys(reference.payload).sort());
     expect(exchanged.header.alg).toBe(reference.header.alg);
+    expect(exchanged.header.kid).toBeDefined();
+    expect(exchanged.header.kid).toBe(reference.header.kid);
     expect(exchanged.payload.iss).toBe(reference.payload.iss);
     expect(exchanged.payload.aud).toBe(reference.payload.aud);
     const life = (p: Record<string, unknown>) => Number(p.exp) - Number(p.iat);
     expect(life(exchanged.payload)).toBe(JWT_LIFETIME_SECONDS);
     expect(life(exchanged.payload)).toBe(life(reference.payload));
+    // /token's claims are definePayload's output for this same session.
     expect({ sub: exchanged.payload.sub, sid: exchanged.payload.sid }).toEqual({
       sub: reference.payload.sub,
       sid: reference.payload.sid,
