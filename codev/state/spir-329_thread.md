@@ -115,3 +115,11 @@
   to any event raised in a request, despite sendDefaultPii:false. The failed-sign-in alert event carried the sign-in email + password + bearer.
   Security owns the develop fix; this PR scrubs the exchange path only (with a negative control). Reproduction is in the review.
 - apps/api full suite flaky at load ~65 (12 files hit 30 s timeouts); all pass in isolation.
+
+## 2026-10-28: phase 7 (end-to-end, scan, docs)
+
+- Exchange token passes apps/api requireUser end to end through the real threads route; app row registered_via='whatsapp'; no phone/BSUID in any app row.
+- resolve-user pins the system-only first-use refusal (mutation proven). Scan 5: 0 hits in 65 files, planted file proven red.
+- Runbook docs/cutover/service-keys-runbook.md + doc tests that read the code (patterns, alert kinds, subcommands, limits). Key log = a table in the runbook.
+- Doc defect fixed everywhere: grant-admin refuses BOTH reserved domains (arch.md, RELEASE.md said system only).
+- Contract summary for #327 sent to security for relay.

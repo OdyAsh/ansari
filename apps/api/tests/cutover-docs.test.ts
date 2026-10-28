@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { limits, serviceUsers } from '../../../packages/auth/src';
 
 // The Better Auth cutover runbooks (spec 300, plan phase 12) are executed
 // mid-window by an operator who cannot stop to hunt for a file. Every repo
@@ -413,5 +414,94 @@ describe('the deployment guide names every variable the new code requires', () =
 
   it('auth gets every required variable of its env schema', () => {
     for (const name of authVars) expect(auth, name).toContain(`| \`${name}\` |`);
+  });
+});
+
+describe('the service-keys runbook (spec 329)', () => {
+  const KEYS_RUNBOOK = 'docs/cutover/service-keys-runbook.md';
+  const doc = read(KEYS_RUNBOOK);
+  const section = (heading: string) => {
+    const start = doc.indexOf(`\n## ${heading}`);
+    if (start < 0) throw new Error(`no runbook section "${heading}"`);
+    const end = doc.indexOf('\n## ', start + 1);
+    return doc.slice(start, end < 0 ? undefined : end);
+  };
+
+  it('every repo path it names exists', () => {
+    const paths = namedRepoPaths(doc);
+    expect(paths.length).toBeGreaterThanOrEqual(4);
+    for (const path of paths) {
+      expect(existsSync(resolve(repoRoot, path)), `${KEYS_RUNBOOK} names ${path}, which does not exist`).toBe(true);
+    }
+  });
+
+  it('carries no bare apply record, which the auth journal parity test would read as one', () => {
+    const record = /^auth-journal-applied:/m;
+    expect(record.test('auth-journal-applied: 0001_api_key_phone')).toBe(true);
+    expect(record.test('record `auth-journal-applied: <tag>` in the notes')).toBe(false);
+    expect(doc).not.toMatch(record);
+  });
+
+  it('documents every subcommand of the script', () => {
+    const script = read('apps/auth/scripts/service-keys.ts');
+    const usage = script.slice(script.indexOf('export const USAGE'), script.indexOf('].join'));
+    const commands = [...usage.matchAll(/service-keys\.ts ([a-z-]+) /g)].map((m) => m[1] as string);
+    expect(commands).toEqual(['create-service', 'create-key', 'list', 'rotate', 'update-limits', 'revoke']);
+    for (const command of commands) expect(doc, command).toMatch(new RegExp(`^\\| \`${command} `, 'm'));
+  });
+
+  it("issues with the WhatsApp key's initial limits from limits.ts", () => {
+    const initial = limits.WHATSAPP_KEY_INITIAL;
+    expect(section('Issuance')).toContain(
+      `--rate-max ${initial.rateLimitMax} --rate-window ${initial.rateLimitTimeWindow / 1000} --daily ${initial.refillAmount}`
+    );
+  });
+
+  it('covers the handoff, the rotation overlap and its doubled ceiling, revocation and pruning', () => {
+    expect(section('The handoff')).toMatch(/\*\*straight into the consumer's Railway variable\*\*/);
+    expect(section('Rotation')).toMatch(/\*\*While two keys are live, the service's ceiling doubles\*\*/);
+    expect(section('Rotation')).toMatch(/\*\*Every key is rotated every\s+6 months\*\*, owned by the operator/);
+    expect(section('Revocation and pruning')).toContain('`enabled = false`');
+    expect(section('Revocation and pruning')).toMatch(/Pruning: none expected/);
+    expect(section('Limits')).toMatch(/\*\*judgement, not measurement\*\*/);
+    expect(section('Limits')).toContain('`update-limits`');
+  });
+
+  it('gives the pre-apply duplicate check and the lock it must plan for', () => {
+    const before = section('Before `0001`: the duplicate check');
+    expect(before).toMatch(/group by provider_id, account_id\s+having count\(\*\) > 1;/);
+    expect(before).toContain('**ACCESS EXCLUSIVE lock on `auth.account`**');
+    expect(before).toContain('psql -X -v ON_ERROR_STOP=1 --single-transaction');
+    expect(before).toMatch(/to staging before this PR merges, and to\s+production before the `develop` → `main` promotion/);
+  });
+
+  it('explains every exchange alert kind', () => {
+    const alerts = read('apps/auth/src/alerts.ts');
+    const union = alerts.slice(alerts.indexOf('export type ExchangeAlert ='), alerts.indexOf('export type KeyRefusalCode'));
+    const kinds = [...union.matchAll(/kind: '([a-z-]+)'/g)].map((m) => m[1] as string);
+    expect(kinds.length).toBe(6);
+    for (const kind of kinds) expect(section('Alerts'), kind).toMatch(new RegExp(`^\\| \`${kind}\``, 'm'));
+  });
+
+  it('the eligibility repair starts from the exact log line and names every reason', () => {
+    const alerts = read('apps/auth/src/alerts.ts');
+    const message = /INELIGIBLE_USER_MESSAGE = '([^']+)'/.exec(alerts)?.[1];
+    expect(message).toBeDefined();
+    const repair = section('Eligibility repair');
+    expect(repair).toContain(`\`${message}\``);
+    for (const reason of ['accounts', 'address', 'registered_via', 'admin']) expect(repair).toContain(`\`${reason}\``);
+  });
+
+  it('has the key log the script banner points to', () => {
+    expect(read('apps/auth/scripts/service-keys.ts')).toContain("the runbook's key log");
+    expect(section('Key log')).toMatch(/^\| Date \(UTC\) \| Action \| Service \| User id \| Key id \|/m);
+  });
+
+  it('gives exactly the secret-scanning patterns the code defines, and where the owner registers them', () => {
+    const scanning = section('Secret scanning');
+    const rows = [...scanning.matchAll(/^\| `([a-z-]+)` \| `([^`]+)` \|$/gm)].map((m) => [m[1], m[2]]);
+    expect(rows).toEqual(Object.entries(serviceUsers.SECRET_SCANNING_PATTERNS).map(([name, re]) => [name, re.source]));
+    expect(scanning).toContain('Settings → Code security → Secret scanning → Custom patterns');
+    expect(scanning).toMatch(/\*\*revoke the key at once\*\*/);
   });
 });
