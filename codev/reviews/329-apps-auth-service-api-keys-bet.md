@@ -234,6 +234,10 @@ after run 5 [test] deadline=100_000 secrets=green copy=green slowest=[copy=14771
 
 At 30 s: `secrets` red 4/5, `copy` red 3/5. At 100 s: both green 5/5 (slowest hook 53.5 s).
 
+### Phase 7: one unidentified `@ansari/auth#test` failure inside porch's check (not reproduced)
+
+After review iteration 1 (docs and apps/api tests only; no packages/auth file changed), porch's `tests` check failed once with `@ansari/auth#test ... exited (1)` after 78.9 s, and porch's truncated output did not name the test. The suite passed alone right after (246 passed, 1 skipped), and the full root command, rerun with its log kept, passed (`@ansari/auth` 246 + 1 skipped, `ansari-api` 1132 + 3 skipped, exit 0). Load averages at the rerun's start: 134 (1 min), 280 (5 min), 252 (15 min). That is consistent with the load timeouts below, but I am not naming a cause I did not see. Nothing was skipped or changed to get past it.
+
 ### Other files that tripped 30 s timeouts in the same runs (evidence for main; not fixed here)
 
 On the same shared machine, with no harness, **other files hit the 30 s hook or test deadline in 5 of the 6 timing runs** (runs 1, 2, 4, 5 and 6; only run 3 was clean). Extracted from the vitest failure summaries of each run's output (`<package> <file> :: <error>`):
