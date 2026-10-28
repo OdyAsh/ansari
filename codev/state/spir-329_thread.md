@@ -29,3 +29,13 @@
 
 - Domain: `@noreply.askansari.ai` (fixed reserved subdomain). Addresses use a kind prefix: `whatsapp-<user id>@…` (the user's own UUID, chosen by the exchange
   before insert, so the address is unique by construction) and `service-<service name>@…`. Considered and rejected: a hostname per user, and the bare @askansari.ai.
+
+## 2026-10-28: spec iteration 2 (security architect's consolidated review: codex + claude, REQUEST_CHANGES)
+
+- Folded in B1-B17. Notable: eligibility re-checked under the user-row lock (sole whatsapp row, noreply domain, registered_via, not admin → else 500 + alert);
+  lock first, then ban/eligibility, session and signJWT in one transaction; relation-level pre-401 check + boot assertion; revoke = disable;
+  no expiry on production keys; per-user budget (429) keyed by user id; blocked paths derived from apiKey().endpoints + prefix rule.
+- Found while revising: FOR UPDATE on users conflicts with the KEY SHARE lock that the session insert's FK takes. If createSession ran on another connection,
+  the request would block on its own lock. better-auth 1.7.7 has runWithTransaction/getCurrentAdapter; the plan must prove this on real Postgres.
+- Corrected my own claim: LIKE 'whatsapp-%' cannot use the default-collation email btree; removed.
+- signJWT is serverOnly, so /token's TOKEN_EXCHANGE_PER_SESSION is bypassed; the per-user budget replaces it.
