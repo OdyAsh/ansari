@@ -27,3 +27,8 @@
 - Claude COMMENT: apps/api kept the query string; `/v2/mcp-complete?q=` is the user's question (verified, route.ts:274). Fixed: scrub drops `query_string` and the URL's query; query fixture added (control leaks it; M7/M8 mutants red).
 - Residuals Claude raised, left for a follow-up issue: apps/api breadcrumbs still on (outbound search URLs carry user terms); apps/auth keeps the URL path (better-auth `reset-password/:token`); `sentry.client.config.ts` has no scrub.
 - Sentry v11 (latest 11.10.0; we run 10.69.0) removes `sendDefaultPii` and defaults `dataCollection` to collect-all (cookies, headers, bodies, DB query data) per its MIGRATION.md. The scrubs hold either way; settings pins in both apps make an upgrade fail loudly.
+
+## Architect asks before the gate (2026-10-29)
+- Commit prefix: the brief's `[Bugfix 333]` was wrong; develop uses `[Bugfix #333]` (cf. #330). Rewriting the three commits and force-pushing with --force-with-lease (architect-approved).
+- Client IP: architect asked to drop `x-real-ip` and `x-forwarded-for` in apps/api. Finding: on @sentry/core 10.69 the SDK already deletes every `ipHeaderNames` header from `event.request` while `userInfo` is off (`requestdata.js` `extractNormalizedRequestData`), so the negative control shows no IP leak. The drop matters once `userInfo` is on (v11's default). New `sentry-request-data-collect-all.test.ts` runs the privacy options under collect-all settings. It caught two more IP routes: span attributes `http.request.header.{x_real_ip,x_forwarded_for}` and `user.ip_address`. All now scrubbed; mutants M9–M12 red.
+- Residuals stay for the owner's follow-up issue (not this PR).

@@ -1,16 +1,19 @@
 import type { Event, NodeOptions } from "@sentry/nextjs";
 
-const CREDENTIAL_HEADERS = new Set(["authorization", "cookie"]);
+// The client IP travels in x-real-ip (Railway's edge) and x-forwarded-for;
+// `sendDefaultPii: false` means Sentry should not receive it. The SDK drops
+// these itself only while `userInfo` is off, which Sentry v11 no longer defaults.
+const DROPPED_HEADERS = new Set(["authorization", "cookie", "x-real-ip", "x-forwarded-for"]);
 // @sentry/nextjs copies headers onto the root span as attributes
 // (`http.request.header.cookie.<name>`, dashes as underscores), masking only
 // sensitive-looking names.
-const CREDENTIAL_ATTRIBUTE =
-  /^http\.(request\.header\.(authorization|cookie)|response\.header\.set_cookie)(\.|$)/;
+const DROPPED_ATTRIBUTE =
+  /^http\.(request\.header\.(authorization|cookie|x_real_ip|x_forwarded_for)|response\.header\.set_cookie)(\.|$)/;
 
-function dropCredentialAttributes(data: Record<string, unknown> | undefined): void {
+function dropAttributes(data: Record<string, unknown> | undefined): void {
   if (!data) return;
   for (const key of Object.keys(data)) {
-    if (CREDENTIAL_ATTRIBUTE.test(key)) delete data[key];
+    if (DROPPED_ATTRIBUTE.test(key)) delete data[key];
   }
 }
 
@@ -18,8 +21,9 @@ function dropCredentialAttributes(data: Record<string, unknown> | undefined): vo
  * Sentry's request-data integration attaches the in-flight request to every
  * event raised while it is handled. Strip what can carry user content or a
  * credential: the body (user messages), the query string (`/v2/mcp-complete?q=`
- * is the user's question), the Authorization header (the user's JWT) and
- * cookies, from the request and from span attributes (issue #333).
+ * is the user's question), the Authorization header (the user's JWT),
+ * cookies and the client IP (its headers and `user.ip_address`), from the
+ * request and from span attributes (issue #333).
  * Node lowercases incoming header names, but a header object built elsewhere
  * may not, so names are matched case-blind.
  */
@@ -32,12 +36,13 @@ export function scrubRequestEvent<E extends Event>(event: E): E {
     if (request.url) request.url = request.url.split("?")[0];
     if (request.headers) {
       for (const name of Object.keys(request.headers)) {
-        if (CREDENTIAL_HEADERS.has(name.toLowerCase())) delete request.headers[name];
+        if (DROPPED_HEADERS.has(name.toLowerCase())) delete request.headers[name];
       }
     }
   }
-  dropCredentialAttributes(event.contexts?.trace?.data);
-  for (const span of event.spans ?? []) dropCredentialAttributes(span.data);
+  if (event.user) delete event.user.ip_address;
+  dropAttributes(event.contexts?.trace?.data);
+  for (const span of event.spans ?? []) dropAttributes(span.data);
   return event;
 }
 

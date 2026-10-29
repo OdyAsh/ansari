@@ -17,12 +17,15 @@ export const FIXTURES = {
   cookie: "COOKIEVALUEMARKER",
   body: "USERMESSAGEMARKER",
   query: "USERQUESTIONMARKER",
+  ip: "203.0.113.77",
 };
 
 const HEADERS = {
   host: "api.example.test",
   authorization: `Bearer ${FIXTURES.bearer}`,
   cookie: `probe=${FIXTURES.cookie}`,
+  "x-real-ip": FIXTURES.ip,
+  "x-forwarded-for": FIXTURES.ip,
   "content-type": "application/json",
 };
 
