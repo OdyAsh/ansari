@@ -134,3 +134,7 @@
 - Conflicts: lessons-learned.md (kept both new sections: spec 321 and spec 329); pnpm-lock.yaml (took develop's, regenerated with `pnpm install --lockfile-only`; frozen install passes; apps/mcp importer kept).
 - develop's auth journal still only has 0000, so no migration-number clash.
 - Verified: typecheck + lint 13/13; @ansari/auth 252+1 skip, ansari-auth 467, ansari-api 1134+3 skip, frontend 774 each green alone. The full parallel root run hit pglite 30 s hook timeouts at load 52-74 (same signature as the recorded flaky class).
+
+## Scope change: phone-number plugin and claim-by-phone (2026-10-30)
+- Owner: "fold into the issue, database changes need to be sorted out now as we haven't run the migrations yet". Security gave the design (gate reopened).
+- Spec amended: new §5 (schema in 0001 in place, plugin enabled and unblocked with a stub sender, verified by construction, claim by phone in the exchange, widened eligibility, link notice, residual). Open points §5.7 sent to security before planning.

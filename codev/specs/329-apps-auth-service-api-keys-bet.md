@@ -163,12 +163,14 @@ No response contains the bearer, the BSUID, the phone number or any part of the 
    - the account row is `{ providerId: 'whatsapp', accountId: <bsuid>, userId }` (the BSUID stored raw, owner decision 2);
    - `phone_number` is stored on the user when provided.
 
+   *Amended (§5, owner amendment 2026-10-30):* before creating a user, a provided `phone_number` already held by a user **claims** that user: the `whatsapp` row is inserted on it instead (§5.4). The stored number is marked verified.
+
    `unique(provider_id, account_id)` makes a BSUID map to exactly one user under concurrency: the losing request rolls back and uses the winner's user.
 4. **Per-user budget.** Spend one unit with `consumeWindow`, keyed by the user id (never the BSUID), numbers in `limits.ts`; spent → 429. It runs on the **pool, outside any transaction**, after the user is resolved and before the lock, like the account endpoints' budget. Inside the locking transaction, every refusal (403, 429, 500) would roll the counter back, and the limit would never bind. The budget bounds per-user session churn and per-user probing. **It does not protect the key's budget:** `verifyApiKey` has already spent a unit of the key's `remaining` and window by then. The key's budget is sized to absorb a looping user, and the per-key volume alert catches one.
 5. **Lock, then decide.** In one transaction, with `lock_timeout` and `statement_timeout` set on it, so the worst case is a 500 rather than a stalled connection in the pool shared with sign-in and JWKS:
    - **Lock** the user's row with `SELECT … FOR NO KEY UPDATE`. It serializes exchanges for one user and conflicts with the ban and the role update (both plain row updates), but not with the `KEY SHARE` lock that a session insert's foreign key takes. So no write, even one on another connection, can wait on the request's own lock.
    - **Re-read under the lock.** The user gone → 500 (deleted mid-exchange; the next message creates a new user).
-   - **Eligibility**, all required: the user's *only* account row is this `whatsapp` row; the address is under `@noreply.askansari.ai`; `registered_via = 'whatsapp'`; `role` is not `admin`. A violation → 500, never a token. It raises a Sentry alert carrying counts only, and logs a server warning line naming the user id (the precedent: apps/api's "app row refused" warning). The runbook gives the repair: inspect that user's rows, remove the stray account row or role, or delete the user so the next message recreates them. Without that repair the BSUID stays refused.
+   - **Eligibility** (*widened by §5.4, owner amendment 2026-10-30; the original rule follows*), all required: the user's *only* account row is this `whatsapp` row; the address is under `@noreply.askansari.ai`; `registered_via = 'whatsapp'`; `role` is not `admin`. A violation → 500, never a token. It raises a Sentry alert carrying counts only, and logs a server warning line naming the user id (the precedent: apps/api's "app row refused" warning). The runbook gives the repair: inspect that user's rows, remove the stray account row or role, or delete the user so the next message recreates them. Without that repair the BSUID stays refused.
    - **Ban** (admin plugin `banned`, honouring `banExpires`) → delete all the user's sessions, commit, 403.
    - **Phone number.** When provided and different from the stored one, update it. When absent, leave the stored one untouched (never clear it).
    - **Session.** Fix the token's times first: `iat = now` and `exp = now + JWT lifetime`. Reuse the user's live session only if `expiresAt ≥ exp + SESSION_MARGIN` (a constant in `limits.ts`). Otherwise delete the user's sessions and **write the new session row directly with Drizzle in this transaction**, as the user and account rows are written:
@@ -193,6 +195,8 @@ The WhatsApp service caches the token per BSUID for under 15 minutes and calls a
 **Accepted oracle residual.** A holder of the WhatsApp key can confirm whether a given BSUID has used Ansari, and whether that user is banned, both from the responses and from latency (new, existing and refused take different times). Guessed BSUIDs also create durable, inert users. This is accepted because the WhatsApp service is the delegation authority: it already holds every BSUID it would ask about. BSUIDs are not enumerable, so this is targeted confirmation, not harvesting. The mitigations are detection, not prevention: per-key request-volume alerts, `USAGE_EXCEEDED` and `RATE_LIMITED` alerts (otherwise invisible, since they collapse to 401), and rotation and revocation. No constant-time padding is built.
 
 ### 3. The phone number (owner decision, reversing spec 321's baked decision 2)
+
+> **Superseded by §5 (owner amendment, 2026-10-30).** The column, its flags, verification, exposure and lookup rules below are replaced by §5. Kept as the record of what was approved first.
 
 The exchange stores the WhatsApp user's phone number when the WhatsApp service has it:
 - **Rules.** Store it on create. On a later exchange, update it when it is provided and different. Never clear it when it is absent (absence is normal, see Current State).
@@ -228,11 +232,78 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
 
 **Timing residual:** sign-in and reset for an existing passwordless noreply user and for an unknown address give the same response shape, but are not guaranteed to take the same time. Only response equivalence is promised. The addresses are server-generated and not guessable from anything public, which bounds the value of the difference.
 
+### 5. Owner amendment (2026-10-30): better-auth's phone-number plugin, and claiming an account by phone number
+
+**Owner decision**, verbatim: "fold into the issue, database changes need to be sorted out now as we haven't run the migrations yet"; earlier: "enable the plugin and don't block it", and "if the user logs in with a phonenumber that already exists, why wouldn't the system attempt to claim the account". The design below is the security architect's direction of 2026-10-29. It supersedes §3 and widens §2's eligibility. Migration `0001` has been applied nowhere, so it changes in place. `auth.apikey` is unchanged (owner: keep).
+
+#### 5.1 Schema (migration `0001`, in place)
+
+- `auth.users` takes the phone-number plugin's columns: `phone_number text UNIQUE` (text, in this schema's style, where the plugin's documentation shows `varchar(255)`) and `phone_number_verified boolean NOT NULL DEFAULT false`.
+- This PR's own nullable `phone_number` additional field is dropped in favour of the plugin's field.
+
+#### 5.2 The plugin: enabled, unblocked
+
+- `phoneNumber()` is enabled in `createAuth`. Its five routes are **not** blocked (owner): `/phone-number/send-otp`, `/phone-number/verify`, `/sign-in/phone-number`, `/phone-number/request-password-reset` and `/phone-number/reset-password`.
+- **There is no SMS sender yet.** `sendOTP` is a required option, so it is implemented as a stub: it counts a Sentry event and throws a typed error. A comment names the WhatsApp service as the intended future sender.
+- **One answer for every OTP refusal.** The perimeter maps that error, and every other refusal on the five routes, to **one** 4xx body. A known and an unknown number are never answered differently.
+- **Per-phone budgets** through `consumeWindow` on all five routes, numbers in `limits.ts`. The rate-limit key holds a hash of the normalized number, never the number. `ROUTER_RULES` stay all `false`; there is no per-IP rule.
+- **Known consequence:** the plugin declares `phoneNumber` and `phoneNumberVerified` `returned: true`, and these flags cannot be changed (better-auth 1.7.7's `mergeSchema` maps names only). So the number is visible to **the user themselves** in their `get-session` and sign-in responses. It stays absent from `GET /api/account/me` (an explicit projection), and so from apps/api.
+
+#### 5.3 Verification by construction
+
+Every number stored is verified:
+- the exchange stores `wa_id` with `phone_number_verified = true` (Meta verified it);
+- the plugin's `/phone-number/verify` sets it after an OTP.
+
+Nothing else can write either column: `update-user` stays blocked, and `phoneNumberVerified` is `input: false`. The plugin's `phoneNumber` field is **not** `input: false`, so sign-up and every other user-writing path refuse a body carrying it, through the `user.create.before` hook and the sign-up guard. A pinning test proves that no write path leaves `phone_number` set with `phone_number_verified = false`.
+
+#### 5.4 Claiming an account by phone number (the exchange)
+
+**Link.** After the BSUID lookup finds **no** row: if `phone_number` is provided and a user already holds that number (verified by construction), the exchange links the BSUID to that user. It inserts the `whatsapp` account row on that user instead of creating a new user.
+- A unique violation on `phone_number` while creating a new user means a concurrent request gave the number to someone first; it is retried once as a claim.
+- `unique(provider_id, account_id)` still makes one BSUID one link under concurrency.
+
+**Eligibility under the lock** (replaces §2 step 5's rule):
+- The user's account rows are this BSUID's `whatsapp` row, plus **at most** a `credential` row. Any other provider row (`service`, `google`, …) → ineligible.
+- The noreply-address and `registered_via = 'whatsapp'` checks apply only to users the exchange created, that is, users with no `credential` row.
+- The admin exclusion is **absolute**: never mint for `role != 'user'`.
+
+**Conflict.** A BSUID already linked to user A, whose new `wa_id` is held by user B → ineligible (500 plus an alert, then an operator repair). Never a silent merge.
+
+**Link notice.** On every link, the account's email, when it has one (not a noreply address), gets a notice that WhatsApp was linked, through the existing mailer, so a wrong link is visible to the real owner. The runbook gets an **unlink procedure**.
+
+**Phone update.** For a BSUID already linked: a provided number different from the stored one, and held by no one else, replaces it (verified). Held by another user → the conflict above.
+
+**Threat model, stated as the feature.** The delegation boundary widens. The exchange may mint for **any non-admin user whose verified phone number the WhatsApp service presents**, not only for users it created itself. The per-key budgets and alerts are the bound on a leaked key.
+
+#### 5.5 Residual (verbatim, security architect)
+
+A phone number recycled by a carrier to a new person yields a new BSUID with the old owner's number, which links the new person to the old owner's account; the link notice and the unlink procedure are the mitigation; Meta regenerates BSUIDs on number change but cannot tell us about recycling.
+
+#### 5.6 Success criteria (amendment)
+
+- [ ] `0001` creates `phone_number text UNIQUE` and `phone_number_verified boolean NOT NULL DEFAULT false` on `auth.users`. The schema and journal-parity tests cover both, and a test checks the schema against better-auth's own model of the configured auth (`getAuthTables`).
+- [ ] `phoneNumber()` is enabled and its five routes are reachable. Each answers **byte-identically** for a known and an unknown number; the stub sender's typed error maps to the one 4xx body; per-phone budgets bind on each route, keyed by a hash of the number.
+- [ ] **Verified by construction:** the exchange writes `verified = true`. Sign-up with a `phoneNumber` field is refused and writes nothing. A pinning test proves no path leaves a number unverified.
+- [ ] **Claim:** an existing verified holder → the `whatsapp` row is linked to it, there is still one user, and the token names that user. A holder that is an admin → refused (500 plus an alert), no row written.
+- [ ] **Conflict:** a BSUID linked to A presenting a number held by B → 500 plus an alert, no change to either user.
+- [ ] **Notice:** a link to a user with a real email sends one notice through the mailer. A link to a noreply-address user sends none.
+- [ ] **Eligibility matrix (amended):** these are eligible: an exchange-created user, and a user with a `credential` row plus this `whatsapp` row. These get 500 plus an alert: any other provider row, an admin or any role other than `user`, an exchange-created user whose address or `registered_via` was changed, a `whatsapp` row whose `account_id` is not this BSUID.
+- [ ] **Exposure (amended):** the number appears in the user's own `get-session` and sign-in responses, and nowhere else. It is absent from `/api/account/me`, apps/api, every log, Sentry event and alert, and every rate-limit key.
+- [ ] The runbook gives the unlink procedure; the spec's threat model and residual read as §5.4 and §5.5.
+
+#### 5.7 Open points, raised with the security architect before planning
+
+1. **A Google user is not claimable** under "at most a `credential` row": a web user who signed in with Google holds no `credential` row, so a link to them would be ineligible. Is that intended, or should any non-`service` provider row be allowed beside `whatsapp`?
+2. **The unlink procedure must also clear the number.** Unlinking deletes the `whatsapp` row, but if the old owner keeps the number, the next message from the same BSUID claims them again. The proposal: unlink deletes the row **and** clears `phone_number` / `phone_number_verified` on the old owner (the number is no longer theirs), and revokes that user's sessions.
+3. **Until a real OTP sender exists, every claim is WhatsApp to WhatsApp.** No web account can verify a number while `sendOTP` is a stub. So every holder is a user the exchange created: a recycled number, or the same person's new BSUID. Those holders have noreply addresses, so the link notice reaches no one. The residual in §5.5 has **no** working mitigation until either the sender exists or the operator watches a per-link alert. Should the exchange raise an alert (counts only) on every link, so the operator sees them?
+4. **`signUpOnVerification` stays off** (the default), so `/phone-number/verify` never creates a user. Confirm.
+
 ## Success Criteria
 
 **Service keys and scripts**
 - [ ] `@better-auth/api-key` is pinned to exactly the installed `better-auth` version (1.7.7); core is not bumped.
-- [ ] The `apikey` table mirrors the plugin's model with generator column names, in the `auth` schema (uuid id, `timestamptz`, `reference_id` uuid → `auth.users` on delete cascade). Migration `0001` (with `unique(provider_id, account_id)` and `auth.users.phone_number`) is the reviewed `drizzle-kit generate` output, numbered by main. The schema tests cover both.
+- [ ] The `apikey` table mirrors the plugin's model with generator column names, in the `auth` schema (uuid id, `timestamptz`, `reference_id` uuid → `auth.users` on delete cascade). Migration `0001` (with `unique(provider_id, account_id)` and, per §5.1, the phone-number plugin's `auth.users.phone_number text UNIQUE` and `phone_number_verified boolean NOT NULL DEFAULT false`) is the reviewed `drizzle-kit generate` output, numbered by main. The schema tests cover both.
 - [ ] apps/auth refuses to start when `auth.apikey` is absent (`42P01`) or the `(provider_id, account_id)` constraint is absent, with a `{name, code}` log.
 - [ ] Database unreachable at boot → apps/auth starts and listens, and `/health` reports the database as down; when the database returns, `/health` recovers without a restart.
 - [ ] The blocked list is derived from `apiKey().endpoints`, filtered to defined paths, with two assertions: 7 endpoints, 5 routed; neither `disabledPaths` nor the middleware contains `undefined`. For each of the 5 paths, this finite list gets the block response: exact; upper-case; mixed case; trailing slash; percent-encoded letter (`%61pi-key`); double-encoded (`%2561pi-key`); doubled slash; `/./` segment; `/x/../` segment; backslash; absolute-form target; a `/suffix` appended. `/api/auth/api-key/verify` and `/api/auth/api-key/delete-all-expired-api-keys` are blocked by the prefix too.
@@ -266,7 +337,7 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
 - [ ] The same BSUID twice returns the same `sub` and the same `sid`; the user has one session.
 - [ ] For every returned token, the session's `expiresAt` ≥ the token's `exp` + `SESSION_MARGIN`. A session that would fail this is replaced (old one deleted, `sid` names the new one).
 - [ ] **Claim-set equality.** An exchange JWT and a `/api/auth/token` JWT for the same kind of user have the same claim keys (`sub`, `sid`, `iat`, `exp`, `iss`, `aud`), the same `alg` and `kid` source, the same `iss` and `aud`, and the same `exp − iat`. A test also pins that the exchange's hand-built `{sub, sid}` equals what `definePayload` returns for the same session, so the two cannot drift.
-- [ ] **Only a user whose sole account row is `whatsapp` is ever minted for.** Each of these gets 500 and an alert, never a token:
+- [ ] *Amended by §5.6 (owner amendment, 2026-10-30): the eligibility matrix there replaces this one.* **Only a user whose sole account row is `whatsapp` is ever minted for.** Each of these gets 500 and an alert, never a token:
   - a `whatsapp` row attached to an email user (one with a `credential` row);
   - a `whatsapp` row attached to a service user;
   - a `whatsapp` row attached to an admin;
@@ -285,8 +356,8 @@ A user in this domain has no password, so they cannot sign in anywhere. A WhatsA
 
 **Exchange: privacy, logging, transport**
 - [ ] No created row (user email and name, session IP and user agent, account, `rate_limit`) contains the BSUID except `account.account_id`.
-- [ ] **The phone number appears only in `auth.users.phone_number`.** It is stored on create when provided, updated when provided and different, and untouched when absent. It is absent from `GET /api/account/me`, from every Better Auth response (`get-session`, sign-in), and from every other row.
-- [ ] Better Auth refuses `phone_number` as input on every path that writes a user (`input: false`), tested on sign-up.
+- [ ] *Amended by §5 (owner amendment, 2026-10-30): the number is now returned by the plugin to the user themselves; see §5.6.* **The phone number appears only in `auth.users.phone_number`.** It is stored on create when provided, updated when provided and different, and untouched when absent. It is absent from `GET /api/account/me`, from every Better Auth response (`get-session`, sign-in), and from every other row.
+- [ ] *Amended by §5.3:* Better Auth refuses `phone_number` as input on every path that writes a user, tested on sign-up (the plugin's own field does not declare `input: false`, so a hook refuses it; §5.3).
 - [ ] Across every refusal, failure and outage case, `console.*` and better-auth's logger contain no raw key, key hash, session token, BSUID, phone number or driver error object.
 - [ ] Better Auth's logger: a non-error log survives with its level and message; a known driver error passed to it is reduced to exactly `{name, code}`; a near miss (a plain object with `name`/`code`-like fields, and a non-error string argument) survives unchanged. This criterion cannot be met by disabling the logger.
 - [ ] Sentry events from the exchange carry no request body, no `Authorization` header and no phone number (tested on a captured event).
@@ -500,6 +571,8 @@ A small table of hashed keys with permissions and limits, verified by apps/auth'
 | Conflicts with other work landing on `develop` | Medium | Low | Reconciled on the branch before merge; tests pin behaviour |
 | A plugin or core bump changes relied-on behaviour | Medium | Medium | Each behaviour pinned by a test; plugin pinned to core |
 | The stored phone number leaks (response, log, Better Auth output, apps/api) | Low | High | One column; `input: false` and `returned: false`; absent from `/api/account/me`; never-log list and capture tests; Sentry scrubbing |
+| A recycled phone number links a new person to the old owner's account (§5.5) | Low | High | Link notice to a real email; unlink procedure; per-link alert (open point §5.7.3) |
+| OTP routes used to enumerate numbers, or for SMS pumping once a sender exists | Medium | Medium | One 4xx body for every refusal on all five routes; per-phone budgets keyed by a hash; the stub sender sends nothing today |
 | A Meta format or enrolment change splits users | Low | Medium | Sanity bounds only, so real users are never refused; the creation-volume signal surfaces a jump; continuity is deferred work (Nice-to-know 19) |
 
 ## References
