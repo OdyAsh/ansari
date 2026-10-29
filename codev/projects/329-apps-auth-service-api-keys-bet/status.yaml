@@ -1,7 +1,7 @@
 id: '329'
 title: apps-auth-service-api-keys-bet
 protocol: spir
-phase: implement
+phase: review
 plan_phases:
   - id: phase_1
     title: Plugin, schema and migration 0001, blocked key surface, library probes
@@ -26,8 +26,8 @@ plan_phases:
     status: complete
   - id: phase_8
     title: Remove the phone number (owner amendment 2)
-    status: in_progress
-current_plan_phase: phase_8
+    status: complete
+current_plan_phase: null
 gates:
   spec-approval:
     status: approved
@@ -42,7 +42,7 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history:
   - iteration: 1
     build_output: ''
@@ -140,7 +140,7 @@ history:
         file: >-
           /Users/amrmohamed/repos/iaser/ansari/.builders/spir-329/codev/projects/329-apps-auth-service-api-keys-bet/329-phase_7-iter1-gemini.txt
 started_at: '2026-10-28T04:31:56.766Z'
-updated_at: '2026-10-29T23:45:45.560Z'
+updated_at: '2026-10-29T23:47:04.902Z'
 context_refreshes:
   - boundary: plan-phase:phase_2
     at: '2026-10-28T06:20:23.009Z'
