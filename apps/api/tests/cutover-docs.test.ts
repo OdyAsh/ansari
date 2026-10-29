@@ -462,7 +462,7 @@ describe('the service-keys runbook (spec 329)', () => {
 
   it('carries no bare apply record, which the auth journal parity test would read as one', () => {
     const record = /^auth-journal-applied:/m;
-    expect(record.test('auth-journal-applied: 0001_api_key_phone')).toBe(true);
+    expect(record.test('auth-journal-applied: 0001_api_key')).toBe(true);
     expect(record.test('record `auth-journal-applied: <tag>` in the notes')).toBe(false);
     expect(doc).not.toMatch(record);
   });

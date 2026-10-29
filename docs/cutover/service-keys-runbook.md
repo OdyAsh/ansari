@@ -123,8 +123,8 @@ A value outside them is refused with nothing written.
 
 ## Applying `0001`: staging, before the merge
 
-`packages/auth/drizzle/0001_api_key_phone.sql` creates `auth.apikey`, adds
-`auth.users.phone_number`, and adds `unique (provider_id, account_id)` to `auth.account`.
+`packages/auth/drizzle/0001_api_key.sql` creates `auth.apikey` and adds
+`unique (provider_id, account_id)` to `auth.account`. No phone number is stored anywhere.
 
 The migration ships **before** the code that uses it: apps/auth refuses to start when
 `auth.apikey` or the constraint is missing, so a deploy that runs ahead of the migration fails

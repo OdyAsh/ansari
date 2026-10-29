@@ -337,7 +337,7 @@ Take a Railway snapshot (or note the PITR mark) of the **app database**, and of 
 ## 5. The auth baseline
 
 The **whole auth journal**, every migration in `packages/auth/drizzle/meta/_journal.json`, in
-its order (`0000_auth_schema`, `0001_api_key_phone` and any later one), one
+its order (`0000_auth_schema`, `0001_api_key` and any later one), one
 `psql -X -v ON_ERROR_STOP=1 --single-transaction` per file, from the operator environment. It
 runs **before** the copy (step 6): the auth database is empty here, so no constraint can fail at
 apply, and the copy then runs against the final schema in its one transaction, where a duplicate

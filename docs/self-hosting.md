@@ -240,7 +240,7 @@ revocation, the alerts and the eligibility repair.
 
 The WhatsApp service trades a Meta business-scoped user id (BSUID) for that user's JWT at
 `POST /api/whatsapp/session` on `apps/auth`'s public origin, with `Authorization: Bearer <key>`
-and `{"bsuid": "...", "phone_number": "..."?}` (`phone_number` optional; `null` counts as absent). It answers `200 {token}` (the same 15-minute
+and `{"bsuid": "..."}` (a `phone_number` field, if sent, is accepted and ignored; no phone number is stored). It answers `200 {token}` (the same 15-minute
 EdDSA `{sub, sid}` JWT every client gets), `400` for a malformed body, one identical `401` for
 every key refusal, `403` for a banned user, `429` with `X-Retry-After` for one user's budget,
 and `500` otherwise. The first exchange for a BSUID creates the user
@@ -256,7 +256,7 @@ The bounds live in `packages/auth/src/limits.ts`: the key's initial values
 15 minutes), the exchange's lock and statement timeouts and body limit, and the alert
 thresholds. There is no new environment variable.
 
-**Migration before code.** `packages/auth/drizzle/0001_api_key_phone.sql` must be applied to the
+**Migration before code.** `packages/auth/drizzle/0001_api_key.sql` must be applied to the
 auth database (after the duplicate check in the runbook, in a quiet window: it locks
 `auth.account`) before the `apps/auth` that uses it deploys; that `apps/auth` refuses to boot
 without it. On a deployment that tracks Ansari's own order: staging gets `0001` before the merge,

@@ -307,35 +307,32 @@ describe('probe 2: signJWT with explicit claims matches /api/auth/token', () => 
   });
 });
 
-describe('probe 4a: phone_number is never input and never returned', () => {
-  it('is absent from sign-in and get-session responses, and ignored on sign-up', async () => {
+describe('no phone number anywhere (spec 329 §5, owner amendment 2)', () => {
+  it('a sign-up carrying phone_number leaves it in no auth row, and sign-in and get-session never carry it', async () => {
     const email = `p4a-${randomUUID().slice(0, 8)}@example.com`;
     const password = 'Phone-Passw0rd!';
+    const number = '15557654321';
     const signUp = await call(auth, '/sign-up/email', {
-      body: { name: 'Probe', email, password, phone_number: '15551234567' },
+      body: { name: 'Probe', email, password, phone_number: number, phoneNumber: number },
     });
-    const { rows } = await client.query<{ id: string; phone_number: string | null }>(
-      `SELECT id, phone_number FROM auth.users WHERE email = $1`,
-      [email]
+    if (signUp.status !== 200) await auth.api.signUpEmail({ body: { name: 'Probe', email, password } });
+
+    const { rows: tables } = await client.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'auth'`
     );
-    // Refused outright or created without it: either way, never stored.
-    expect(rows[0]?.phone_number ?? null).toBeNull();
-    if (signUp.status !== 200) {
-      expect(signUp.status).toBe(400);
-      await auth.api.signUpEmail({ body: { name: 'Probe', email, password } });
+    expect(tables.length).toBeGreaterThan(0);
+    for (const { table_name } of tables) {
+      const { rows } = await client.query<{ row: unknown }>(`SELECT row_to_json(t) AS row FROM auth."${table_name}" t`);
+      expect(JSON.stringify(rows), table_name).not.toContain(number);
     }
 
-    await client.query(`UPDATE auth.users SET phone_number = '15551234567' WHERE email = $1`, [email]);
     const signedIn = await signIn(auth, email, password);
     const signInBody = await signedIn.res.text();
     expect(signInBody).toContain(email);
-    expect(signInBody).not.toContain('15551234567');
     expect(signInBody).not.toContain('phone');
-
     const session = await call(auth, '/get-session', { bearer: signedIn.token! });
     const text = await session.text();
     expect(text).toContain(email);
-    expect(text).not.toContain('15551234567');
     expect(text).not.toContain('phone');
   });
 });

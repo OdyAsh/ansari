@@ -23,7 +23,6 @@ CREATE TABLE "auth"."apikey" (
 	"metadata" text
 );
 --> statement-breakpoint
-ALTER TABLE "auth"."users" ADD COLUMN "phone_number" text;--> statement-breakpoint
 ALTER TABLE "auth"."apikey" ADD CONSTRAINT "apikey_reference_id_users_id_fk" FOREIGN KEY ("reference_id") REFERENCES "auth"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "apikey_configId_idx" ON "auth"."apikey" USING btree ("config_id");--> statement-breakpoint
 CREATE INDEX "apikey_referenceId_idx" ON "auth"."apikey" USING btree ("reference_id");--> statement-breakpoint

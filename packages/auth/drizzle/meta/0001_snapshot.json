@@ -1,5 +1,5 @@
 {
-  "id": "200c5f19-adaf-4a6c-a74d-41aab3d151d5",
+  "id": "cbec1bad-8081-444d-b23b-5671ec74959e",
   "prevId": "ef46b800-df6b-416d-829e-ca67e0aab294",
   "version": "7",
   "dialect": "postgresql",
@@ -657,12 +657,6 @@
         },
         "registered_via": {
           "name": "registered_via",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "phone_number": {
-          "name": "phone_number",
           "type": "text",
           "primaryKey": false,
           "notNull": false

@@ -218,7 +218,10 @@ export const EXCHANGE_STATEMENT_TIMEOUT = 5 * SECOND_MS;
  */
 export const APIKEY_RELATION_CHECK_TTL = 5 * SECOND_MS;
 
-/** The exchange's request body limit, in bytes: `bsuid` ≤ 256, `phone_number` ≤ 32, plus JSON. */
+/**
+ * The exchange's request body limit, in bytes: `bsuid` ≤ 256 plus JSON, with room
+ * for the `phone_number` the consumer may still send (accepted and ignored).
+ */
 export const EXCHANGE_BODY_LIMIT = 1024;
 
 /**

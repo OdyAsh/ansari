@@ -92,7 +92,7 @@ describe('auth migration files', () => {
   it('the journal is the fresh 0000 (the #59 scaffold 0000 is gone), then 0001 (spec 329)', () => {
     expect(journal.map((e) => e.idx)).toEqual([0, 1]);
     expect(journal[0].tag).not.toBe('0000_better_auth_init');
-    expect(journal[1].tag).toBe('0001_api_key_phone');
+    expect(journal[1].tag).toBe('0001_api_key');
   });
 });
 

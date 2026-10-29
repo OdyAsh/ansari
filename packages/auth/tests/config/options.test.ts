@@ -48,12 +48,10 @@ describe('createAuth() options', () => {
     expect(auth.options.advanced?.database?.generateId).toBe('uuid');
   });
 
-  it('declares the additional user fields, registered_via server-only, phone_number never in or out', () => {
+  it('declares the additional user fields, registered_via server-only, and no phone number (spec 329 §5)', () => {
     const fields = auth.options.user?.additionalFields ?? {};
-    expect(Object.keys(fields).sort()).toEqual(['first_name', 'last_name', 'phone_number', 'registered_via']);
+    expect(Object.keys(fields).sort()).toEqual(['first_name', 'last_name', 'registered_via']);
     expect(fields.registered_via?.input).toBe(false);
-    expect(fields.phone_number?.input).toBe(false);
-    expect(fields.phone_number?.returned).toBe(false);
   });
 
   it('uses the dual-verify password functions and revokes sessions on reset', () => {

@@ -51,7 +51,6 @@ afterAll(async () => {
 const digits = (n: number) => Array.from({ length: n }, () => randomInt(10)).join('');
 /** A BSUID shaped like Meta's (`US.` and 20 digits), unique per test. */
 const newBsuid = () => `US.${digits(20)}`;
-const newPhone = () => `1${digits(11)}`;
 
 type SessionRow = {
   id: string;
@@ -78,8 +77,7 @@ async function userRow(userId: string) {
     name: string;
     role: string | null;
     registered_via: string | null;
-    phone_number: string | null;
-  }>(`SELECT email, name, role, registered_via, phone_number FROM auth.users WHERE id = $1`, [userId]);
+  }>(`SELECT email, name, role, registered_via FROM auth.users WHERE id = $1`, [userId]);
   return rows[0];
 }
 
@@ -116,17 +114,16 @@ function expectIssued(outcome: WhatsappTokenOutcome) {
 }
 
 /** A new WhatsApp user with a token issued, as the route would do it. */
-async function exchange(bsuid = newBsuid(), phone: string | null = null) {
-  const { userId } = await resolveOrCreateWhatsappUser(db, bsuid, phone);
-  const outcome = expectIssued(await issueWhatsappToken(auth, db, { userId, bsuid, phone }));
+async function exchange(bsuid = newBsuid()) {
+  const { userId } = await resolveOrCreateWhatsappUser(db, bsuid);
+  const outcome = expectIssued(await issueWhatsappToken(auth, db, { userId, bsuid }));
   return { userId, bsuid, ...outcome };
 }
 
 describe('resolve or create', () => {
   it('a new BSUID makes one user (exact address), one whatsapp account row and, on issue, one session', async () => {
     const bsuid = newBsuid();
-    const phone = newPhone();
-    const resolved = await resolveOrCreateWhatsappUser(db, bsuid, phone);
+    const resolved = await resolveOrCreateWhatsappUser(db, bsuid);
     expect(resolved.created).toBe(true);
 
     expect(await userRow(resolved.userId)).toEqual({
@@ -134,7 +131,6 @@ describe('resolve or create', () => {
       name: WHATSAPP_USER_NAME,
       role: 'user',
       registered_via: WHATSAPP_REGISTERED_VIA,
-      phone_number: phone,
     });
     expect(await accountsOf(resolved.userId)).toEqual([
       { provider_id: WHATSAPP_PROVIDER_ID, account_id: bsuid },
@@ -144,20 +140,22 @@ describe('resolve or create', () => {
     ]);
     expect(rows).toHaveLength(0);
 
-    expectIssued(await issueWhatsappToken(auth, db, { userId: resolved.userId, bsuid, phone }));
+    expectIssued(await issueWhatsappToken(auth, db, { userId: resolved.userId, bsuid }));
     expect(await sessionsOf(resolved.userId)).toHaveLength(1);
   });
 
-  it('without a phone number, the user is created with none', async () => {
-    const { userId } = await resolveOrCreateWhatsappUser(db, newBsuid(), null);
-    expect((await userRow(userId))?.phone_number).toBeNull();
+  it('auth.users has no phone_number column (spec 329 §5, owner amendment 2)', async () => {
+    const { rows } = await client.query(
+      `SELECT 1 FROM information_schema.columns WHERE table_schema = 'auth' AND table_name = 'users' AND column_name = 'phone_number'`
+    );
+    expect(rows).toHaveLength(0);
   });
 
   it('a repeat finds the same user and reuses the same session (same sub and sid)', async () => {
     const first = await exchange();
-    const again = await resolveOrCreateWhatsappUser(db, first.bsuid, null);
+    const again = await resolveOrCreateWhatsappUser(db, first.bsuid);
     expect(again).toEqual({ userId: first.userId, created: false });
-    const second = expectIssued(await issueWhatsappToken(auth, db, { userId: first.userId, bsuid: first.bsuid, phone: null }));
+    const second = expectIssued(await issueWhatsappToken(auth, db, { userId: first.userId, bsuid: first.bsuid }));
     expect(second.sessionId).toBe(first.sessionId);
     expect(decodeJwt(second.token).payload.sub).toBe(first.userId);
     expect(decodeJwt(second.token).payload.sid).toBe(first.sessionId);
@@ -168,9 +166,9 @@ describe('resolve or create', () => {
     const bsuid = newBsuid();
     const before = (await client.query<{ n: number }>(`SELECT count(*)::int AS n FROM auth.users`)).rows[0]!.n;
     let winner = '';
-    const loser = await resolveOrCreateWhatsappUser(db, bsuid, null, {
+    const loser = await resolveOrCreateWhatsappUser(db, bsuid, {
       beforeCreate: async () => {
-        winner = (await resolveOrCreateWhatsappUser(db, bsuid, null)).userId;
+        winner = (await resolveOrCreateWhatsappUser(db, bsuid)).userId;
       },
     });
     expect(winner).not.toBe('');
@@ -187,8 +185,8 @@ describe('resolve or create', () => {
   it('two creates racing for one BSUID end with one user, both callers getting it', async () => {
     const bsuid = newBsuid();
     const [a, b] = await Promise.all([
-      resolveOrCreateWhatsappUser(db, bsuid, null),
-      resolveOrCreateWhatsappUser(db, bsuid, null),
+      resolveOrCreateWhatsappUser(db, bsuid),
+      resolveOrCreateWhatsappUser(db, bsuid),
     ]);
     expect(a.userId).toBe(b.userId);
     const { rows } = await client.query(
@@ -205,7 +203,7 @@ describe('the session and the token', () => {
     const tooShort = new Date(Date.now() + JWT_LIFETIME_SECONDS * 1000 + SESSION_MARGIN - 60_000);
     await client.query(`UPDATE auth.session SET expires_at = $1 WHERE id = $2`, [tooShort, first.sessionId]);
 
-    const second = expectIssued(await issueWhatsappToken(auth, db, { userId: first.userId, bsuid: first.bsuid, phone: null }));
+    const second = expectIssued(await issueWhatsappToken(auth, db, { userId: first.userId, bsuid: first.bsuid }));
     expect(second.sessionId).not.toBe(first.sessionId);
     const sessions = await sessionsOf(first.userId);
     expect(sessions.map((s) => s.id)).toEqual([second.sessionId]);
@@ -216,7 +214,7 @@ describe('the session and the token', () => {
     const first = await exchange();
     const enough = new Date(Date.now() + JWT_LIFETIME_SECONDS * 1000 + SESSION_MARGIN + 60_000);
     await client.query(`UPDATE auth.session SET expires_at = $1 WHERE id = $2`, [enough, first.sessionId]);
-    const second = expectIssued(await issueWhatsappToken(auth, db, { userId: first.userId, bsuid: first.bsuid, phone: null }));
+    const second = expectIssued(await issueWhatsappToken(auth, db, { userId: first.userId, bsuid: first.bsuid }));
     expect(second.sessionId).toBe(first.sessionId);
   });
 
@@ -263,7 +261,7 @@ describe('the session and the token', () => {
     const tokens = [row!.token];
     for (let i = 0; i < 19; i++) {
       await client.query(`DELETE FROM auth.session WHERE user_id = $1`, [userId]);
-      expectIssued(await issueWhatsappToken(auth, db, { userId, bsuid, phone: null }));
+      expectIssued(await issueWhatsappToken(auth, db, { userId, bsuid }));
       tokens.push((await sessionsOf(userId))[0]!.token);
     }
     for (const token of tokens) expect(token).toMatch(/^[A-Za-z0-9]{32}$/);
@@ -287,26 +285,9 @@ describe('the session and the token', () => {
   });
 });
 
-describe('the phone number', () => {
-  it('is updated when provided and different, untouched when absent, and held only in users.phone_number', async () => {
-    const bsuid = newBsuid();
-    const first = newPhone();
-    const { userId } = await exchange(bsuid, first);
-    expect((await userRow(userId))?.phone_number).toBe(first);
-
-    const second = newPhone();
-    expectIssued(await issueWhatsappToken(auth, db, { userId, bsuid, phone: second }));
-    expect((await userRow(userId))?.phone_number).toBe(second);
-
-    expectIssued(await issueWhatsappToken(auth, db, { userId, bsuid, phone: null }));
-    expect((await userRow(userId))?.phone_number).toBe(second);
-
-    expect(await columnsHolding(first)).toEqual([]);
-    expect(await columnsHolding(second)).toEqual(['users.phone_number']);
-  });
-
+describe('where the BSUID lives', () => {
   it('the BSUID is held only in account.account_id', async () => {
-    const { bsuid } = await exchange(newBsuid(), newPhone());
+    const { bsuid } = await exchange(newBsuid());
     expect(await columnsHolding(bsuid)).toEqual(['account.account_id']);
   });
 });
@@ -314,35 +295,35 @@ describe('the phone number', () => {
 describe('between resolve and lock', () => {
   it('a ban committed first → banned, every session deleted, no token', async () => {
     const { userId, bsuid } = await exchange();
-    await resolveOrCreateWhatsappUser(db, bsuid, null);
+    await resolveOrCreateWhatsappUser(db, bsuid);
     // The ban alone, without the ban script's own session delete: the
     // exchange must delete them itself.
     await client.query(`UPDATE auth.users SET banned = true WHERE id = $1`, [userId]);
-    expect(await issueWhatsappToken(auth, db, { userId, bsuid, phone: null })).toEqual({ kind: 'banned' });
+    expect(await issueWhatsappToken(auth, db, { userId, bsuid })).toEqual({ kind: 'banned' });
     expect(await sessionsOf(userId)).toHaveLength(0);
   });
 
   it('an expired ban (ban_expires in the past) is not refused', async () => {
     const bsuid = newBsuid();
-    const { userId } = await resolveOrCreateWhatsappUser(db, bsuid, null);
+    const { userId } = await resolveOrCreateWhatsappUser(db, bsuid);
     await client.query(`UPDATE auth.users SET banned = true, ban_expires = now() - interval '1 hour' WHERE id = $1`, [
       userId,
     ]);
-    expectIssued(await issueWhatsappToken(auth, db, { userId, bsuid, phone: null }));
+    expectIssued(await issueWhatsappToken(auth, db, { userId, bsuid }));
   });
 
   it('the user deleted first → user-gone, no session', async () => {
     const bsuid = newBsuid();
-    const { userId } = await resolveOrCreateWhatsappUser(db, bsuid, null);
+    const { userId } = await resolveOrCreateWhatsappUser(db, bsuid);
     await client.query(`DELETE FROM auth.users WHERE id = $1`, [userId]);
-    expect(await issueWhatsappToken(auth, db, { userId, bsuid, phone: null })).toEqual({ kind: 'user-gone' });
+    expect(await issueWhatsappToken(auth, db, { userId, bsuid })).toEqual({ kind: 'user-gone' });
     expect(await sessionsOf(userId)).toHaveLength(0);
   });
 });
 
 describe('eligibility: a row a person could not have made → ineligible, no token, no session', () => {
   async function expectIneligible(userId: string, bsuid: string, reason: string) {
-    const outcome = await issueWhatsappToken(auth, db, { userId, bsuid, phone: newPhone() });
+    const outcome = await issueWhatsappToken(auth, db, { userId, bsuid });
     expect(outcome).toEqual({ kind: 'ineligible', reason });
     expect(await sessionsOf(userId)).toHaveLength(0);
   }
@@ -350,7 +331,7 @@ describe('eligibility: a row a person could not have made → ineligible, no tok
   /** A fresh WhatsApp user, resolved but not yet exchanged. */
   async function resolved() {
     const bsuid = newBsuid();
-    const { userId } = await resolveOrCreateWhatsappUser(db, bsuid, null);
+    const { userId } = await resolveOrCreateWhatsappUser(db, bsuid);
     return { userId, bsuid };
   }
 
@@ -365,7 +346,7 @@ describe('eligibility: a row a person could not have made → ineligible, no tok
       `INSERT INTO auth.account (provider_id, account_id, user_id, updated_at) VALUES ('whatsapp', $1, $2, now())`,
       [bsuid, userId]
     );
-    expect((await resolveOrCreateWhatsappUser(db, bsuid, null)).userId).toBe(userId);
+    expect((await resolveOrCreateWhatsappUser(db, bsuid)).userId).toBe(userId);
     await expectIneligible(userId, bsuid, 'accounts');
   });
 
@@ -397,7 +378,7 @@ describe('eligibility: a row a person could not have made → ineligible, no tok
   it('an admin, or a user promoted between resolve and lock', async () => {
     const { userId, bsuid } = await exchange();
     await client.query(`UPDATE auth.users SET role = 'admin' WHERE id = $1`, [userId]);
-    const outcome = await issueWhatsappToken(auth, db, { userId, bsuid, phone: null });
+    const outcome = await issueWhatsappToken(auth, db, { userId, bsuid });
     expect(outcome).toEqual({ kind: 'ineligible', reason: 'role' });
 
     const fresh = await resolved();
@@ -433,12 +414,6 @@ describe('eligibility: a row a person could not have made → ineligible, no tok
     await expectIneligible(userId, bsuid, 'registered_via');
   });
 
-  it('an ineligible user leaves the phone number untouched', async () => {
-    const { userId, bsuid } = await resolved();
-    await client.query(`UPDATE auth.users SET registered_via = NULL WHERE id = $1`, [userId]);
-    await expectIneligible(userId, bsuid, 'registered_via');
-    expect((await userRow(userId))?.phone_number).toBeNull();
-  });
 });
 
 describe('source level: what runs under the lock, and what does not', () => {
@@ -453,11 +428,11 @@ describe('source level: what runs under the lock, and what does not', () => {
     return source.slice(start, end);
   }
 
-  it('the eligibility re-read, ban, phone update and session write sit in the locked transaction body', () => {
+  it('the eligibility re-read, ban and session write sit in the locked transaction body', () => {
     const locked = body('decideUnderLock');
     const lockAt = locked.indexOf(".for('no key update')");
     expect(lockAt).toBeGreaterThan(-1);
-    for (const step of ['.from(account)', 'isBanned(', 'phoneNumber: phone', '.insert(session)']) {
+    for (const step of ['.from(account)', 'isBanned(', '.insert(session)']) {
       expect(locked.indexOf(step), step).toBeGreaterThan(lockAt);
     }
     expect(locked.indexOf("set_config('lock_timeout'")).toBeLessThan(lockAt);

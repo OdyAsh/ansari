@@ -63,13 +63,12 @@ describe('auth schema shape (spec success criteria)', () => {
     ]);
   });
 
-  it('auth.users carries the additional fields and admin columns, and no system_key or source', async () => {
+  it('auth.users carries the additional fields and admin columns, and no system_key, source or phone_number', async () => {
     const users = (await authColumns()).filter((c) => c.table_name === 'users').map((c) => c.column_name);
     for (const col of [
       'first_name',
       'last_name',
       'registered_via',
-      'phone_number',
       'role',
       'banned',
       'ban_reason',
@@ -80,6 +79,8 @@ describe('auth schema shape (spec success criteria)', () => {
     }
     expect(users).not.toContain('system_key');
     expect(users).not.toContain('source');
+    // Spec 329 §5, owner amendment 2: no phone number is stored anywhere.
+    expect(users).not.toContain('phone_number');
     const all = (await authColumns()).map((c) => c.column_name);
     expect(all).not.toContain('system_key');
     expect(all).not.toContain('source');

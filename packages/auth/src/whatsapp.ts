@@ -1,14 +1,14 @@
 // The WhatsApp token exchange's decision (spec 329), without HTTP: resolve or
 // create the BSUID's user, then, under a lock on that user's row, check
-// eligibility and ban, record the phone number, write the session and sign.
+// eligibility and ban, write the session and sign.
 // apps/auth's POST /api/whatsapp/session calls these after the key check and
 // the per-user budget.
 //
 // A WhatsApp user is one auth user with no credential, found by its
 // `{ providerId: 'whatsapp', accountId: <BSUID> }` account row, never by email
 // or phone number. The BSUID is stored raw in `account.account_id` and nowhere
-// else; the phone number only in `users.phone_number`. Neither is ever logged
-// or returned.
+// else, and is never logged or returned. No phone number is stored anywhere
+// (spec 329 §5, owner amendment 2): the route accepts and ignores it.
 //
 // The lock is `FOR NO KEY UPDATE`: it serializes exchanges for one user and
 // waits out a ban or a role change (plain row updates), but not the `KEY SHARE`
@@ -79,7 +79,6 @@ export type ResolveSeams = { beforeCreate?: () => Promise<void> };
 export async function resolveOrCreateWhatsappUser(
   db: Db,
   bsuid: string,
-  phone: string | null,
   seams: ResolveSeams = {}
 ): Promise<ResolvedWhatsappUser> {
   const existing = await findWhatsappUserId(db, bsuid);
@@ -95,7 +94,6 @@ export async function resolveOrCreateWhatsappUser(
         email: whatsappAddress(userId),
         role: USER_ROLE,
         registeredVia: WHATSAPP_REGISTERED_VIA,
-        phoneNumber: phone,
       });
       await tx.insert(account).values({
         providerId: WHATSAPP_PROVIDER_ID,
@@ -128,8 +126,6 @@ export type IneligibleReason =
 export type WhatsappTokenRequest = {
   userId: string;
   bsuid: string;
-  /** Updated when given and different; never cleared when absent. */
-  phone: string | null;
 };
 
 export type WhatsappTokenOutcome =
@@ -150,12 +146,12 @@ type TokenTimes = { iat: number; exp: number };
 /**
  * The exchange's whole decision, in the caller's transaction, under a
  * `FOR NO KEY UPDATE` lock on the user's row: the user re-read, eligibility,
- * the ban, the phone number and the session. Nothing here signs or spends a
+ * the ban and the session. Nothing here signs or spends a
  * rate-limit budget.
  */
 async function decideUnderLock(
   tx: Tx,
-  { userId, bsuid, phone }: WhatsappTokenRequest,
+  { userId, bsuid }: WhatsappTokenRequest,
   { exp }: TokenTimes,
   now: Date
 ): Promise<Decision> {
@@ -181,10 +177,6 @@ async function decideUnderLock(
   if (isBanned(user, now)) {
     await tx.delete(session).where(eq(session.userId, userId));
     return { kind: 'banned' };
-  }
-
-  if (phone !== null && phone !== user.phoneNumber) {
-    await tx.update(users).set({ phoneNumber: phone }).where(eq(users.id, userId));
   }
 
   const mustOutlive = new Date(exp * 1000 + SESSION_MARGIN);

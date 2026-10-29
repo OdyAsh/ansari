@@ -423,6 +423,58 @@ This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under 
 
 Probe outputs, per-phase notes and the pre-existing Sentry reproduction, recorded as each phase ran.
 
+### Phase 8: remove the phone number (owner amendment 2) (notes)
+
+- **Source.** `schema.ts` drops `users.phoneNumber` and `createAuth` drops the `phone_number` additional field. In `whatsapp.ts`, `resolveOrCreateWhatsappUser` and `issueWhatsappToken` take no phone, and the update under the lock is gone. The route reads `bsuid` only: a `phone_number` in any shape is accepted and never read. `EXCHANGE_BODY_LIMIT` is unchanged, with room for the field until #327 stops sending it.
+- **Migration.** `0001` was regenerated in place as `0001_api_key` (`drizzle-kit generate --name api_key`, after removing the old entry and snapshot). Its diff from the old `0001_api_key_phone.sql` is exactly one line, the removed `ALTER TABLE "auth"."users" ADD COLUMN "phone_number" text`. The tag is renamed in every test and doc. Historical outputs quoted in this review keep the old name. `AUTH_DEPLOYED_THROUGH` stays `null`.
+- **New tests:**
+  - `packages/auth/tests/schema/better-auth-model.test.ts`: `getAuthTables` with the configured options, against the journal-built database. It covers all models (`apikey`'s 21 fields included), with one documented deviation, `apikey.referenceId` as uuid with a foreign key. Its negative control, a dropped `key` column and a retyped `name`, reports both.
+  - `apps/auth/tests/no-phone-source.test.ts`: 0 hits in 28 files, comments excluded. Its negatives: a planted read and a string are caught; comments are not.
+  - The route's accept-and-ignore cases: digits, a leading `+`, a JSON number, `null`, empty, 33 characters, letters and spaces. Each gets a 200, and an all-tables scan of `auth` then finds the value in no row; the scan also asserts that its own BSUID is present, so it cannot pass vacuously. The end-to-end test scans the auth side too.
+- **Kept as needles:** the never-log capture, the Sentry scrub test, the raw-response-bytes assertion, `/me` and the rate-limit key test.
+- **Mutation checks** on the route, each reverted:
+  - a 400 on a numeric `phone_number` turns the accept test and the source check red (2 failed);
+  - logging the field turns the log-capture test and the source check red (2 failed).
+- **Probes** after the edits, on Postgres 18 (throwaway container): library probes 3/3, the lock probe 12/12.
+
+```
+Probes 2 and session token against Postgres 18.6 (Debian 18.6-1.pgdg13+2) at 127.0.0.1 (2026-10-29T23:43:07.444Z)
+PASS  2 signJWT({sub, sid, iat, exp}) matches a /api/auth/token JWT; the passed exp is honoured
+PASS  2 without iat the claim set differs (why the exchange passes it)
+PASS  session token: generateRandomString(32, a-z, A-Z, 0-9) has the shape createSession writes
+3/3 steps as expected.
+Probe 4 against Postgres 18.6 (Debian 18.6-1.pgdg13+2) at 127.0.0.1 (2026-10-29T23:43:08.485Z)
+PASS  A same-transaction session insert under FOR NO KEY UPDATE: committed without waiting; 1 session
+PASS  B concurrent ban waits for the exchange, then deletes its session: ban waited: true; ban finished after exchange commit: true; sessions left: 0
+PASS  C session insert from another connection does not wait on FOR NO KEY UPDATE: insert completed while the lock was held
+PASS  C' contrast: FOR UPDATE blocks another connection's session insert (the hazard): other connection's insert: 57014 (57014 = cancelled by statement_timeout, i.e. it waited)
+PASS  D lock_timeout turns a held lock into 55P03: waiting exchange got: 55P03
+PASS  E1 signing AFTER commit, pool max 2: 10/10 finished
+PASS  E2 signing INSIDE the transaction, pool max 2, no connect timeout: deadline: the run HUNG (10000 ms), as expected for signing inside
+PASS  E2 signing INSIDE the transaction, pool max 2, connect timeout 2000 ms: 0/10 finished; failures: Error (loud failure, no hang)
+PASS  F1 real functions: 10 concurrent exchanges for one new BSUID: distinct users: 1; distinct sids: 1; whatsapp rows: 1; sessions: 1
+PASS  F2 real functions: another connection's open session insert does not block the exchange: exchange outcome while the insert was open: issued
+PASS  F3 real functions: a held ban update fails the exchange with 55P03 within its lock_timeout: exchange got 55P03 after 2014 ms (lock_timeout 2000 ms); after the ban committed: banned
+PASS  F4 real functions: 10 concurrent new users on a pool of 2 (sign after commit): 10/10 issued
+12/12 steps as expected.
+```
+
+- **Verified:** typecheck and lint 13/13; `@ansari/auth` 254 + 1 skipped; `ansari-auth` 472; `ansari-api` 1139 + 3 skipped.
+
+### Re-walk of phases 1 to 7 after the porch rollback to plan, 2026-10-30
+
+`porch rollback 329 plan` re-extracts the plan and resets every plan phase to pending, so after the plan gate porch required phases 1 to 7 to be walked again. Parent mode and `none` mode both dead-end for plan phases in this codev version (`dist/commands/porch/next.js`), so, with the security architect's agreement, the re-walk used normal mode: porch replayed the recorded review files of 2026-10-28, iteration by iteration. It ran no new consult (none was emitted), and each step ran the build and test checks, all green. The phase 8 work was stashed so the checks ran on the committed code only.
+
+- phase_1: re-walked after the porch rollback; code unchanged since a2a16745; recorded reviews replayed (iter 1 REQUEST_CHANGES + rebuttal, iter 2 APPROVE).
+- phase_2: re-walked after the porch rollback; code unchanged since a2a16745; recorded reviews replayed (iter 1 APPROVE).
+- phase_3: re-walked after the porch rollback; code unchanged since a2a16745; recorded reviews replayed (iter 1 REQUEST_CHANGES + rebuttal, iter 2 APPROVE).
+- phase_4: re-walked after the porch rollback; code unchanged since a2a16745; recorded reviews replayed (iters 1 and 2 REQUEST_CHANGES + rebuttal, iter 3 APPROVE).
+- phase_5: re-walked after the porch rollback; code unchanged since a2a16745; recorded reviews replayed (iter 1 REQUEST_CHANGES + rebuttal, iter 2 APPROVE).
+- phase_6: re-walked after the porch rollback; code unchanged since a2a16745; recorded reviews replayed (iter 1 REQUEST_CHANGES + rebuttal, iter 2 APPROVE).
+- phase_7: re-walked after the porch rollback; code unchanged since a2a16745; recorded reviews replayed (iter 1 REQUEST_CHANGES + rebuttal, iter 2 APPROVE).
+
+The consultation override used along the way (`modelsByType`) was removed before phase 8; `.codev/config.json` is untracked and back to `models: codex, gemini`.
+
 ### Phase 8, step 1: `0001` applied nowhere (T12), 2026-10-30
 
 The owner, who operates staging, wrote (relayed verbatim by the security architect on 2026-10-30): "nothing has been executed against staging as we didn't merge yet."

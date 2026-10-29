@@ -4,7 +4,11 @@
 //
 //   POST /api/whatsapp/session
 //     Authorization: Bearer <api key>
-//     { "bsuid": "<BSUID>", "phone_number": "<digits>"? }   (null = absent)
+//     { "bsuid": "<BSUID>" }
+//
+// A `phone_number` field, which the WhatsApp service may still send, is
+// accepted in any shape and ignored: never read, stored, logged or echoed
+// (spec 329 §5, owner amendment 2).
 //
 //   200 { token }  400 Invalid request  401 Unauthorized (every key refusal,
 //   one body)  403 Forbidden (banned)  429 Too many requests (this user's
@@ -52,9 +56,6 @@ const REQUIRED_PERMISSIONS = { whatsapp: [...serviceUsers.SERVICES.whatsapp.perm
  * identical name two users.
  */
 const BSUID = /^[^\s\p{Cc}\p{Cf}]{1,256}$/u;
-/** Digits with an optional leading `+`, at most 32 characters. */
-const PHONE = /^\+?[0-9]+$/;
-const PHONE_MAX = 32;
 
 export const exchangeLimitKey = (userId: string) => `sub:${userId}|${WHATSAPP_SESSION_PATH}`;
 
@@ -64,7 +65,7 @@ export type ExchangeOptions = {
   now?: () => number;
 };
 
-type ExchangeBody = { bsuid: string; phone: string | null };
+type ExchangeBody = { bsuid: string };
 
 const KEY_REFUSAL_CODES: readonly string[] = ['USAGE_EXCEEDED', 'RATE_LIMITED'] satisfies KeyRefusalCode[];
 
@@ -77,15 +78,15 @@ function bearerOf(req: Request): string | null {
   return match?.[1] ?? null;
 }
 
-/** The sanity bounds (spec 329 §2, step 2); null when the body fails them. */
+/**
+ * The sanity bounds (spec 329 §2, step 2); null when the body fails them. Only
+ * `bsuid` is read: every other field is ignored.
+ */
 function exchangeBody(body: unknown): ExchangeBody | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
-  const { bsuid, phone_number: phone } = body as Record<string, unknown>;
+  const { bsuid } = body as Record<string, unknown>;
   if (typeof bsuid !== 'string' || !BSUID.test(bsuid)) return null;
-  // JSON clients commonly send null for an absent optional field: absent, never a clear.
-  if (phone === undefined || phone === null) return { bsuid, phone: null };
-  if (typeof phone !== 'string' || phone.length > PHONE_MAX || !PHONE.test(phone)) return null;
-  return { bsuid, phone };
+  return { bsuid };
 }
 
 const unauthorized = (res: Response) => res.status(401).json({ message: 'Unauthorized' });
@@ -166,7 +167,7 @@ export function whatsappRouter({ auth, db }: ServiceDeps, options: ExchangeOptio
     try {
       const body = exchangeBody(req.body);
       if (!body) return void invalidRequest(res);
-      const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, body.bsuid, body.phone);
+      const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, body.bsuid);
 
       // On the pool, outside the locking transaction: a refusal inside it
       // would roll the counter back, and the budget would never bind.

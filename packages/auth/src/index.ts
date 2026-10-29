@@ -263,15 +263,6 @@ export function createAuth(db: Db = createDb(), extensions: AuthExtensions = {})
           input: false,
           fieldName: 'registeredVia',
         },
-        // WhatsApp users only, written directly by the token exchange (spec
-        // 329). PII: no Better Auth path accepts or returns it.
-        phone_number: {
-          type: 'string',
-          required: false,
-          input: false,
-          returned: false,
-          fieldName: 'phoneNumber',
-        },
       },
       // The profile copy in the app database cannot follow an email change
       // until a sync design exists (spec 300 follow-up), so it is off.

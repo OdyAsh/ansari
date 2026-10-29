@@ -26,7 +26,7 @@ describe('auth-journal.mjs', () => {
     expect(created(m0000!.file).length).toBe(readFileSync(m0000!.file, 'utf8').split('--> statement-breakpoint').filter((s) => s.trim()).length);
     const c0001 = created(m0001!.file).join('\n');
     expect(c0001).toContain(`to_regclass('"auth"."apikey"')`);
-    expect(c0001).toContain("column_name = 'phone_number'");
+    expect(c0001).not.toContain('phone_number');
     expect(c0001).toContain("c.conname = 'account_provider_id_account_id_unique'");
   });
 
@@ -50,7 +50,7 @@ describe('auth-journal.mjs', () => {
   it('the check fails, naming the migration, on a database migrated only through 0000', async () => {
     const client = await migrate('0000_auth_schema');
     try {
-      await expect(client.exec(checkSql() as string)).rejects.toThrow(/auth journal check: not applied: 0001_api_key_phone/);
+      await expect(client.exec(checkSql() as string)).rejects.toThrow(/auth journal check: not applied: 0001_api_key/);
     } finally {
       await client.close();
     }

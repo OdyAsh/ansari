@@ -78,8 +78,8 @@ describe('self-hosting docs: service keys and the WhatsApp exchange (spec 329)',
   });
 
   it('puts migration 0001 before the code, which refuses to boot without it', () => {
-    expect(section).toMatch(/\*\*Migration before code\.\*\* `packages\/auth\/drizzle\/0001_api_key_phone\.sql`/);
-    expect(existsSync(resolve(__dirname, '../../../packages/auth/drizzle/0001_api_key_phone.sql'))).toBe(true);
+    expect(section).toMatch(/\*\*Migration before code\.\*\* `packages\/auth\/drizzle\/0001_api_key\.sql`/);
+    expect(existsSync(resolve(__dirname, '../../../packages/auth/drizzle/0001_api_key.sql'))).toBe(true);
     expect(section).toMatch(/refuses to boot\s+without it/);
     expect(doc).toMatch(/refuses to start when the auth database lacks `auth\.apikey`/);
   });

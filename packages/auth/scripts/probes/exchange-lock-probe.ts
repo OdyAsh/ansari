@@ -305,8 +305,8 @@ async function stepRealFunctions(url: string): Promise<void> {
           DEADLINE_MS,
           Promise.all(
             Array.from({ length: 10 }, async () => {
-              const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, id, null);
-              return { userId, outcome: await whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id, phone: null }) };
+              const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, id);
+              return { userId, outcome: await whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id }) };
             })
           )
         );
@@ -335,10 +335,10 @@ async function stepRealFunctions(url: string): Promise<void> {
       const step = "F2 real functions: another connection's open session insert does not block the exchange";
       const id = bsuid();
       try {
-        const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, id, null);
+        const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, id);
         await other.query('BEGIN');
         await other.query(INSERT_SESSION, [token(), userId]);
-        const outcome = await within(DEADLINE_MS, whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id, phone: null }));
+        const outcome = await within(DEADLINE_MS, whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id }));
         await other.query('ROLLBACK');
         record(step, outcome.kind === 'issued', `exchange outcome while the insert was open: ${outcome.kind}`);
       } catch (err) {
@@ -353,20 +353,20 @@ async function stepRealFunctions(url: string): Promise<void> {
       const step = 'F3 real functions: a held ban update fails the exchange with 55P03 within its lock_timeout';
       const id = bsuid();
       try {
-        const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, id, null);
+        const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, id);
         await other.query('BEGIN');
         await other.query('UPDATE auth.users SET banned = true WHERE id = $1', [userId]);
         const started = Date.now();
         const result = await within(
           DEADLINE_MS,
-          whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id, phone: null }).then(
+          whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id }).then(
             (o) => o.kind,
             (err: unknown) => errCode(err)
           )
         );
         const waited = Date.now() - started;
         await other.query('COMMIT');
-        const after = await within(DEADLINE_MS, whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id, phone: null }));
+        const after = await within(DEADLINE_MS, whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id }));
         record(
           step,
           result === '55P03' && waited < limits.EXCHANGE_LOCK_TIMEOUT + 1_500 && after.kind === 'banned',
@@ -389,8 +389,8 @@ async function stepRealFunctions(url: string): Promise<void> {
           Promise.allSettled(
             Array.from({ length: 10 }, async () => {
               const id = bsuid();
-              const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, id, null);
-              return whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id, phone: null });
+              const { userId } = await whatsapp.resolveOrCreateWhatsappUser(db, id);
+              return whatsapp.issueWhatsappToken(auth, db, { userId, bsuid: id });
             })
           )
         );

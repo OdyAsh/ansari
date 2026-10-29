@@ -91,6 +91,20 @@ async function appDatabaseText(): Promise<string> {
   return dumps.join('\n');
 }
 
+/** Every row of every table in the auth database, as text (spec 329 §5: no phone number stored). */
+async function authDatabaseText(): Promise<string> {
+  const { rows } = await service.client.query<{ name: string }>(
+    "select table_name as name from information_schema.tables where table_schema = 'auth'"
+  );
+  const dumps = await Promise.all(
+    rows.map(async ({ name }) => {
+      const result = await service.client.query<{ row: string }>(`select row_to_json(t)::text as row from auth."${name}" t`);
+      return result.rows.map((r) => r.row).join('\n');
+    })
+  );
+  return dumps.join('\n');
+}
+
 describe('a WhatsApp exchange token through apps/api requireUser', () => {
   it('passes, creates the app row on first use under the same UUID, and carries no phone number', async () => {
     const bsuid = `US.${digits(20)}`;
@@ -116,6 +130,10 @@ describe('a WhatsApp exchange token through apps/api requireUser', () => {
 
     const appText = await appDatabaseText();
     expect(appText).toContain(sub);
+    // The phone number is accepted and ignored at apps/auth too: in no auth row (spec 329 §5).
+    const authText = await authDatabaseText();
+    expect(authText).toContain(bsuid);
+    expect(authText).not.toContain(phone);
     for (const sensitive of [phone, bsuid]) {
       expect(appText).not.toContain(sensitive);
       expect(first.text).not.toContain(sensitive);

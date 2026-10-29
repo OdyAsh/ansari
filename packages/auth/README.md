@@ -12,7 +12,7 @@ tables (`public.users`, `threads`, …) live in the app database under their own
 
 | Table | Notes |
 |---|---|
-| `auth.users` | better-auth's `user` model, mapped by `user.modelName: 'users'`. Adds `first_name`, `last_name` and `registered_via`, and the admin plugin's `role`, `banned`, `ban_reason` and `ban_expires`, and `phone_number` (`0001`; a WhatsApp user's number, written only by the exchange, never returned). There is no `system_key` and no `source`. |
+| `auth.users` | better-auth's `user` model, mapped by `user.modelName: 'users'`. Adds `first_name`, `last_name` and `registered_via`, and the admin plugin's `role`, `banned`, `ban_reason` and `ban_expires`. There is no `system_key` and no `source`. |
 | `auth.session` | `user_id` → `auth.users.id` `ON DELETE CASCADE`. Adds the admin plugin's `impersonated_by`. |
 | `auth.account` | `user_id` → `auth.users.id` `ON DELETE CASCADE`. `unique (user_id, provider_id)`: at most one credential row per user. `unique (provider_id, account_id)` (`0001`): one user per provider id, so a BSUID (`provider_id = 'whatsapp'`) or a service name (`'service'`) maps to exactly one user under concurrency. |
 | `auth.verification` | Keyed by `identifier`, with no user reference. |
@@ -56,8 +56,8 @@ when the plugin is removed, a 30-minute-old per-email row is pruned and the test
 ## Migrations
 
 `drizzle/` holds the auth database's **only** journal, generated from `src/schema.ts`: `0000`
-(the schema at the cutover) and `0001_api_key_phone` (spec 329: `auth.apikey`,
-`auth.users.phone_number` and the `auth.account` `unique (provider_id, account_id)`).
+(the schema at the cutover) and `0001_api_key` (spec 329: `auth.apikey` and the
+`auth.account` `unique (provider_id, account_id)`).
 `0001` is applied after a duplicate check and in a quiet window, since the constraint locks
 `auth.account` (`docs/cutover/service-keys-runbook.md`); `apps/auth` refuses to boot without it.
 

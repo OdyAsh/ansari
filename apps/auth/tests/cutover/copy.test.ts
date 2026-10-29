@@ -461,7 +461,7 @@ describe('copy.sh --dry-run: the same copy, rolled back', () => {
   it('the baseline is the whole journal: a baseline missing a later migration fails its assertion, naming it', async () => {
     await seed(app, legacy());
     const all = migrations() as { tag: string; file: string }[];
-    expect(all.map((m) => m.tag)).toEqual(['0000_auth_schema', '0001_api_key_phone']);
+    expect(all.map((m) => m.tag)).toEqual(['0000_auth_schema', '0001_api_key']);
     // Only 0000's SQL, followed by the full journal's assertion (from the real baseline).
     const full = baselineSql() as string;
     const assertion = full.slice(full.indexOf('do $check$'));
@@ -469,7 +469,7 @@ describe('copy.sh --dry-run: the same copy, rolled back', () => {
     const bare = emptyDatabase();
     try {
       await expect(dryCopy(app, bare, { baseline: baselineFile(only0000) })).rejects.toThrow(
-        /auth journal check: not applied: 0001_api_key_phone/
+        /auth journal check: not applied: 0001_api_key/
       );
       expect(await authSchemas(bare)).toBe(0);
     } finally {
@@ -481,10 +481,10 @@ describe('copy.sh --dry-run: the same copy, rolled back', () => {
     const sql = baselineSql() as string;
     const at = (needle: string) => sql.indexOf(needle);
     expect(at('-- 0000_auth_schema')).toBeGreaterThanOrEqual(0);
-    expect(at('-- 0001_api_key_phone')).toBeGreaterThan(at('-- 0000_auth_schema'));
-    expect(at('CREATE TABLE "auth"."apikey"')).toBeGreaterThan(at('-- 0001_api_key_phone'));
+    expect(at('-- 0001_api_key')).toBeGreaterThan(at('-- 0000_auth_schema'));
+    expect(at('CREATE TABLE "auth"."apikey"')).toBeGreaterThan(at('-- 0001_api_key'));
     expect(at('do $check$')).toBeGreaterThan(at('CREATE TABLE "auth"."apikey"'));
-    expect(sql).toContain("column_name = 'phone_number'");
+    expect(sql).not.toContain('phone_number');
   });
 
   it('the guards still fire, and a refused dry run leaves the database as found', async () => {

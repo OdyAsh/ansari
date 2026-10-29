@@ -315,26 +315,43 @@ describe('the exchange', () => {
     expect((await exchange(bsuid)).status).toBe(200);
   });
 
-  it('an explicit "phone_number": null is absent: 200, and a stored number is left as it was', async () => {
-    const bsuid = newBsuid();
-    const phone = newPhone();
-    const { sub } = await claims(await tokenOf(await exchange(bsuid, phone)));
-    const res = await post(`{"bsuid":${JSON.stringify(bsuid)},"phone_number":null}`);
-    expect((await claims(await tokenOf(res))).sub).toBe(sub);
-    const { rows } = await service.client.query<{ phone_number: string | null }>(
-      'select phone_number from auth.users where id = $1',
-      [sub]
-    );
-    expect(rows[0]?.phone_number).toBe(phone);
-  });
-
   it.each(['bearer', 'BEARER', 'BeArEr'])('the %s scheme is the Bearer scheme (RFC 7235: case-insensitive)', async (scheme) => {
     const res = await post({ bsuid: newBsuid() }, { authorization: `${scheme} ${key}` });
     expect(res.status, res.text).toBe(200);
   });
 
-  it('a phone number with a leading + is accepted', async () => {
-    expect((await exchange(newBsuid(), remember(`+${digits(12)}`))).status).toBe(200);
+  /** Every row of every table in the auth schema, as JSON text, for a needle scan. */
+  async function authRowsText(): Promise<string> {
+    const { rows: tables } = await service.client.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'auth' ORDER BY table_name`
+    );
+    expect(tables.length).toBeGreaterThan(5);
+    const parts: string[] = [];
+    for (const { table_name } of tables) {
+      const { rows } = await service.client.query<{ row: unknown }>(`SELECT row_to_json(t) AS row FROM auth."${table_name}" t`);
+      parts.push(JSON.stringify(rows));
+    }
+    return parts.join('\n');
+  }
+
+  // Spec 329 §5, owner amendment 2: phone_number is accepted in any shape and ignored.
+  it.each([
+    ['digits', () => remember(`1${digits(11)}`)],
+    ['a leading +', () => remember(`+${digits(12)}`)],
+    ['a JSON number', () => Number(`7${digits(10)}`)],
+    ['null', () => null],
+    ['an empty string', () => ''],
+    ['33 characters', () => remember(`9${digits(32)}`)],
+    ['letters and spaces', () => remember(`abc ${digits(8)} xyz`)],
+  ] as const)('phone_number as %s → 200, and the number is in no auth row', async (_name, make) => {
+    const value = make();
+    const bsuid = newBsuid();
+    const res = await post({ bsuid, phone_number: value });
+    expect(res.status, res.text).toBe(200);
+    const rows = await authRowsText();
+    expect(rows).toContain(bsuid); // the scan sees this exchange's own writes
+    if (value !== null && String(value).length > 2) expect(rows).not.toContain(String(value));
+    expect(res.text).not.toContain('phone');
   });
 });
 
@@ -551,12 +568,6 @@ describe('the body (after a valid key)', () => {
     ['bsuid with a zero-width space', '{"bsuid":"US.\\u200b123"}', 'application/json'],
     ['bsuid with a bidi override', '{"bsuid":"US.\\u202e123"}', 'application/json'],
     ['bsuid with a zero-width joiner', '{"bsuid":"US.\\u200d123"}', 'application/json'],
-    ['phone_number not a string', '{"bsuid":"US.1","phone_number":15551234567}', 'application/json'],
-    ['phone_number empty', '{"bsuid":"US.1","phone_number":""}', 'application/json'],
-    ['phone_number over 32 characters', JSON.stringify({ bsuid: 'US.1', phone_number: '1'.repeat(33) }), 'application/json'],
-    ['phone_number with letters', '{"bsuid":"US.1","phone_number":"1555abc"}', 'application/json'],
-    ['phone_number with spaces', '{"bsuid":"US.1","phone_number":"1 555 123"}', 'application/json'],
-    ['phone_number a lone +', '{"bsuid":"US.1","phone_number":"+"}', 'application/json'],
   ];
 
   it.each(cases)('%s → the exact 400, no HTML, no body fragment', async (_name, body, contentType) => {

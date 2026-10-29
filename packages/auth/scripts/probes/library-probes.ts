@@ -1,5 +1,5 @@
 /**
- * Probes 2, 4a and the session-token probe (spec 329, plan phase 1) against a
+ * Probes 2 and the session-token probe (spec 329, plan phase 1) against a
  * REAL Postgres, as the gate before phase 5 requires. The same behaviours are
  * pinned on pglite in tests/config/api-key.test.ts; this run prints what was
  * observed so the output can be pasted into the review. Operator-run, against a
@@ -23,7 +23,6 @@ import * as schema from '../../src/schema';
 import { localUrlFromArgs, resetSchema, serverVersion, setProbeEnv } from './probe-db';
 
 const BASE = 'http://localhost:3100';
-const PHONE = '15551234567';
 
 type Result = { step: string; ok: boolean };
 const results: Result[] = [];
@@ -102,40 +101,6 @@ async function probe2(auth: Auth, pool: Pool): Promise<void> {
   ]);
 }
 
-async function probe4a(auth: Auth, pool: Pool): Promise<void> {
-  const email = `p4a-${randomUUID().slice(0, 8)}@example.com`;
-  const password = 'Phone-Passw0rd!';
-  const signUp = await call(auth, '/sign-up/email', {
-    body: { name: 'Probe', email, password, phone_number: PHONE },
-  });
-  const signUpBody = await signUp.text();
-  const stored = await pool.query<{ phone_number: string | null }>(
-    'SELECT phone_number FROM auth.users WHERE email = $1',
-    [email]
-  );
-  const refusedOrIgnored = signUp.status === 400 || signUp.status === 200;
-  const neverStored = (stored.rows[0]?.phone_number ?? null) === null;
-  record('4a sign-up with phone_number is refused or ignored, and nothing is stored', refusedOrIgnored && neverStored, [
-    `sign-up status ${signUp.status}, body ${signUp.status === 200 ? '(a session; not printed)' : signUpBody}`,
-    `users rows for the email: ${stored.rowCount}; phone_number stored: ${stored.rows[0]?.phone_number ?? 'null'}`,
-  ]);
-
-  if (signUp.status !== 200) await auth.api.signUpEmail({ body: { name: 'Probe', email, password } });
-  await pool.query('UPDATE auth.users SET phone_number = $1 WHERE email = $2', [PHONE, email]);
-  const signIn = await call(auth, '/sign-in/email', { body: { email, password } });
-  const signInBody = await signIn.text();
-  const sessionToken = (JSON.parse(signInBody) as { token: string }).token;
-  const session = await call(auth, '/get-session', { bearer: sessionToken });
-  const sessionBody = await session.text();
-  const absent = (body: string) => !body.includes(PHONE) && !body.includes('phone');
-  record('4a with phone_number set in the row, it is absent from sign-in and get-session',
-    signIn.status === 200 && session.status === 200 && signInBody.includes(email) && sessionBody.includes(email) &&
-      absent(signInBody) && absent(sessionBody), [
-      `sign-in ${signIn.status}: user keys [${Object.keys((JSON.parse(signInBody) as { user: object }).user).sort().join(',')}]; contains the number: ${signInBody.includes(PHONE)}; contains "phone": ${signInBody.includes('phone')}`,
-      `get-session ${session.status}: user keys [${Object.keys((JSON.parse(sessionBody) as { user: object }).user).sort().join(',')}]; contains the number: ${sessionBody.includes(PHONE)}; contains "phone": ${sessionBody.includes('phone')}`,
-    ]);
-}
-
 async function probeSessionToken(auth: Auth, pool: Pool): Promise<void> {
   const id = randomUUID();
   await pool.query(`INSERT INTO auth.users (id, name, email) VALUES ($1, 'svc', $2)`, [
@@ -162,14 +127,13 @@ async function probeSessionToken(auth: Auth, pool: Pool): Promise<void> {
 
 async function main(): Promise<void> {
   const { url, host } = localUrlFromArgs('library-probes.ts');
-  console.log(`Probes 2, 4a and session token against Postgres ${await serverVersion(url)} at ${host} (${new Date().toISOString()})`);
+  console.log(`Probes 2 and session token against Postgres ${await serverVersion(url)} at ${host} (${new Date().toISOString()})`);
   await resetSchema(url);
   setProbeEnv(url);
   const pool = new Pool({ connectionString: url, max: 4 });
   const auth = createAuth(drizzle({ client: pool, schema }) as unknown as Db);
   try {
     await probe2(auth, pool);
-    await probe4a(auth, pool);
     await probeSessionToken(auth, pool);
   } finally {
     await pool.end();

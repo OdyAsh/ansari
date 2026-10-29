@@ -64,10 +64,6 @@ export const users = authSchema.table('users', {
   firstName: text('first_name'),
   lastName: text('last_name'),
   registeredVia: text('registered_via'),
-  // WhatsApp users only, written by the token exchange (spec 329). PII:
-  // never input, never returned by Better Auth (`input: false`,
-  // `returned: false` in createAuth) and absent from /api/account/me.
-  phoneNumber: text('phone_number'),
 });
 
 export const session = authSchema.table(
