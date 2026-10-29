@@ -128,3 +128,9 @@
 - Review doc rewritten into the template; probe outputs and phase notes kept as an appendix. One spec criterion open: staging smoke (#327's builder, pre-production gate).
 - Lessons routed cold (new spec 329 section in lessons-learned.md); hot map entry for spec 300 extended to name spec 329 (count unchanged). arch-critical unchanged (at cap).
 - Merge precondition unchanged: AUTH_DEPLOYED_THROUGH -> 0001 at the rebase after spec 300 cutover; 0001 applied to staging before merge.
+
+## Merged develop (2026-10-30)
+- Owner asked to merge develop into the branch: 98 commits incl. #327 (WhatsApp service), #323 (apps/mcp), #328. Merge commit 62dbe6f7.
+- Conflicts: lessons-learned.md (kept both new sections: spec 321 and spec 329); pnpm-lock.yaml (took develop's, regenerated with `pnpm install --lockfile-only`; frozen install passes; apps/mcp importer kept).
+- develop's auth journal still only has 0000, so no migration-number clash.
+- Verified: typecheck + lint 13/13; @ansari/auth 252+1 skip, ansari-auth 467, ansari-api 1134+3 skip, frontend 774 each green alone. The full parallel root run hit pglite 30 s hook timeouts at load 52-74 (same signature as the recorded flaky class).
