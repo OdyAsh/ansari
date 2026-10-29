@@ -423,6 +423,12 @@ This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under 
 
 Probe outputs, per-phase notes and the pre-existing Sentry reproduction, recorded as each phase ran.
 
+### Phase 8, step 1: `0001` applied nowhere (T12), 2026-10-30
+
+The owner, who operates staging, wrote (relayed verbatim by the security architect on 2026-10-30): "nothing has been executed against staging as we didn't merge yet."
+
+Applying `0001` to staging is the pre-merge step, and the merge has not happened, so `0001` was never applied to staging. Production has nothing applied (its cutover has not run). The two read-only queries main asked for (`auth-journal.mjs check` against staging, and a direct look for `auth.apikey` and `auth.users.phone_number`) were **not run**, because the apply step itself never ran; the security architect accepted the owner's record on that basis. Decision: `0001` is regenerated in place as `0001_api_key`, with no `phone_number`. The `0002` fallback is not needed.
+
 ### Owner amendment 1 (phone-number plugin, claiming by number): withdrawn, the record
 
 On 2026-10-30 the owner folded better-auth's phone-number plugin and claiming an account by phone number into this project (spec amendment 1, commits 1d84f91d and ca1452db; plan phase 8, d3b92b00). Porch rolled back from review to plan. Codex's plan consult (iteration 2) and the security architect's own review and external round (Codex and Claude, both REQUEST CHANGES) then found that the plan could not be built safely as asked. The security architect's 20 findings are in `codev/projects/329-*/329-plan-iter2-input-security-T1-T20.md`, the external texts in `329-plan-iter2-input-s5-{codex,claude}.md`.
