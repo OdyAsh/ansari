@@ -17,7 +17,7 @@ import { TEST_JWT_AUDIENCE, TEST_JWT_ISSUER } from '../../../packages/auth/tests
 import {
   createExchangeAlerts,
   INELIGIBLE_USER_MESSAGE,
-  scrubExchangeEvent,
+  scrubRequestEvent,
   type ExchangeAlert,
 } from '../src/alerts';
 import { createApp } from '../src/app';
@@ -745,8 +745,8 @@ describe('the per-key daily alert across a day (fake clock)', () => {
 });
 
 describe('the Sentry scrub', () => {
-  it('an event from the exchange keeps the method and path only', () => {
-    const scrubbed = scrubExchangeEvent({
+  it('an event from the exchange keeps the method, path and safe headers only', () => {
+    const scrubbed = scrubRequestEvent({
       message: 'x',
       request: {
         method: 'POST',
@@ -757,12 +757,26 @@ describe('the Sentry scrub', () => {
         cookies: { a: 'b' },
       },
     });
-    expect(scrubbed.request).toEqual({ method: 'POST', url: `https://auth.example${WHATSAPP_SESSION_PATH}` });
+    expect(scrubbed.request).toEqual({
+      method: 'POST',
+      url: `https://auth.example${WHATSAPP_SESSION_PATH}`,
+      headers: { 'content-type': 'application/json' },
+    });
   });
 
-  it('an event from another path is left as it is', () => {
-    const request = { method: 'GET', url: 'https://auth.example/api/account/me', headers: { a: 'b' } };
-    expect(scrubExchangeEvent({ request: { ...request } }).request).toEqual(request);
+  // Since #334 the scrub is unconditional: every path, not only the exchange.
+  it('an event from another path is scrubbed the same way', () => {
+    const request = {
+      method: 'GET',
+      url: 'https://auth.example/api/account/me?x=1',
+      headers: { authorization: 'Bearer a.jwt.here', cookie: 'c=1', 'user-agent': 'ua' },
+      data: '{"email":"a@example.com"}',
+    };
+    expect(scrubRequestEvent({ request: { ...request } }).request).toEqual({
+      method: 'GET',
+      url: 'https://auth.example/api/account/me',
+      headers: { 'user-agent': 'ua' },
+    });
   });
 });
 

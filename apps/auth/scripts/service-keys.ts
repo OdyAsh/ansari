@@ -592,7 +592,9 @@ export async function serviceKeys(argv: readonly string[], deps: ScriptDeps): Pr
 /**
  * Sentry options for this script. Breadcrumbs are off: with Sentry's default
  * Console integration every console line becomes a breadcrumb on the next
- * event, and the line before the operator event is the raw key.
+ * event, and the line before the operator event is the raw key. There is no
+ * `beforeSend` (unlike `SERVICE_SENTRY_OPTIONS`): a CLI handles no HTTP
+ * request, so no request data is attached to its events.
  */
 export const SCRIPT_SENTRY_OPTIONS = {
   sendDefaultPii: false,

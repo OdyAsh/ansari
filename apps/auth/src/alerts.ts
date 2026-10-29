@@ -41,34 +41,47 @@ export type FailedSignInAlert = {
 
 export const FAILED_SIGN_IN_MESSAGE = 'auth: failed sign-ins over the alert threshold, every email together (spray?)';
 
-/** The exchange's path, here so the Sentry scrub needs no route import. */
+/** The exchange's path: the route, app.ts, the outage probe and a docs test read it from here. */
 export const WHATSAPP_SESSION_PATH = '/api/whatsapp/session';
 
 /**
- * Sentry's HTTP integration attaches the incoming request (headers, and the
- * body up to a size) to an event raised while it is handled. An event from
- * the exchange keeps the method and path only: its body carries the BSUID and
- * the phone number, and its `Authorization` header the service key.
+ * Headers an event may keep: none is a credential, and the user agent is one
+ * of the few things that tells a botnet spray from a broken client.
  */
-export function scrubExchangeEvent<E extends Sentry.Event>(event: E): E {
+const KEPT_HEADERS = new Set(['host', 'user-agent', 'content-type']);
+
+/**
+ * Sentry's request-data integration attaches the in-flight request (headers,
+ * cookies, query string and body) to every event raised while it is handled:
+ * a sign-in's email and password, a bearer. `sendDefaultPii: false` does not
+ * cover bodies or the Authorization header, so every event keeps only the
+ * request's method, path and the headers in KEPT_HEADERS. That includes the
+ * WhatsApp exchange (spec 329): its body carries the BSUID and the phone
+ * number, and its `Authorization` header the service key.
+ */
+export function scrubRequestEvent<E extends Sentry.Event>(event: E): E {
   const request = event.request;
-  if (!request?.url?.includes(WHATSAPP_SESSION_PATH)) return event;
-  event.request = { method: request.method, url: request.url.split('?')[0] };
+  if (!request) return event;
+  const headers = Object.fromEntries(
+    Object.entries(request.headers ?? {}).filter(([name]) => KEPT_HEADERS.has(name.toLowerCase()))
+  );
+  event.request = { method: request.method, url: request.url?.split('?')[0], headers };
   return event;
 }
 
 /**
  * The service's Sentry options beside the DSN and environment; tests add only a transport.
- * No breadcrumbs, service-wide: the Console integration records every `console`
- * line as a breadcrumb that rides on the next event, so the ineligible-user log
- * line (a user id) would reach Sentry with that alert. Nothing here relies on
+ * No breadcrumbs, service-wide: an HTTP breadcrumb carries its request's query
+ * string, and the Console integration records every `console` line as a
+ * breadcrumb that rides on the next event, so the ineligible-user log line (a
+ * user id) would reach Sentry with that alert. Nothing here relies on
  * breadcrumbs (as `SCRIPT_SENTRY_OPTIONS` for the scripts).
  */
 export const SERVICE_SENTRY_OPTIONS = {
   sendDefaultPii: false,
   maxBreadcrumbs: 0,
   beforeBreadcrumb: () => null,
-  beforeSend: scrubExchangeEvent,
+  beforeSend: scrubRequestEvent,
 } as const;
 
 export function initSentry(dsn: string | undefined, environment: string): void {
