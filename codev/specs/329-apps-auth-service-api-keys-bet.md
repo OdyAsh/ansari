@@ -257,47 +257,71 @@ Every number stored is verified:
 
 Nothing else can write either column: `update-user` stays blocked, and `phoneNumberVerified` is `input: false`. The plugin's `phoneNumber` field is **not** `input: false`, so sign-up and every other user-writing path refuse a body carrying it, through the `user.create.before` hook and the sign-up guard. A pinning test proves that no write path leaves `phone_number` set with `phone_number_verified = false`.
 
-#### 5.4 Claiming an account by phone number (the exchange)
+#### 5.4 A number another user already holds: claim or supersede (the exchange)
 
-**Link.** After the BSUID lookup finds **no** row: if `phone_number` is provided and a user already holds that number (verified by construction), the exchange links the BSUID to that user. It inserts the `whatsapp` account row on that user instead of creating a new user.
-- A unique violation on `phone_number` while creating a new user means a concurrent request gave the number to someone first; it is retried once as a claim.
-- `unique(provider_id, account_id)` still makes one BSUID one link under concurrency.
+After the BSUID lookup finds **no** row, and `phone_number` is provided and already held by a user (verified by construction), the holder decides what happens:
+
+- **Claim**, when the holder has `role = 'user'`, no `service` row, and **at least one sign-in method other than WhatsApp**: a `credential` row, or any social provider row (`google`, `apple`, …). Other provider rows are fine. The exchange links the BSUID to that user by inserting the `whatsapp` account row on it, instead of creating a new user.
+  - Only such a holder chose to attach the number (by OTP, once a sender exists), and only such a holder can receive the link notice.
+  - The account's email, when it is not a noreply address, gets a notice that WhatsApp was linked, through the existing mailer.
+  - Every link also raises a counts-only alert (`whatsapp-linked`).
+- **Supersede**, when the holder has **no** sign-in method other than WhatsApp (a user the exchange created). The number is not claimed. While the sender is a stub, every collision is WhatsApp to WhatsApp, and Meta regenerates a BSUID on a number change, so a new BSUID with an existing number is almost always a recycled number (a different person) or a Meta account reset. Linking it would hand the old person's conversation history to the new number's owner, with no notice possible. So, in one transaction:
+  - the old user's `phone_number` and `phone_number_verified` are cleared (the number provably belongs to the new BSUID now);
+  - the old user's sessions are revoked;
+  - a new user is created for the new BSUID, holding the number;
+  - a counts-only alert (`number-superseded`) is raised.
+
+  The old user keeps its threads, orphaned, for the operator.
+- **Refuse**, when the holder is an admin or has any role other than `user`, or holds a `service` row: 500 plus an alert. Nothing is written.
+
+**Concurrency.** A unique violation on `phone_number` while creating a user means a concurrent request gave the number to someone first; the request is retried once through the rules above. `unique(provider_id, account_id)` still makes one BSUID one link.
 
 **Eligibility under the lock** (replaces §2 step 5's rule):
-- The user's account rows are this BSUID's `whatsapp` row, plus **at most** a `credential` row. Any other provider row (`service`, `google`, …) → ineligible.
-- The noreply-address and `registered_via = 'whatsapp'` checks apply only to users the exchange created, that is, users with no `credential` row.
-- The admin exclusion is **absolute**: never mint for `role != 'user'`.
+- `role = 'user'`, absolutely: never mint for an admin or any other role.
+- No `service` row.
+- This BSUID's `whatsapp` row is the user's only `whatsapp` row. Any other sign-in rows (`credential`, social providers) are allowed.
+- A user with no sign-in method other than WhatsApp (one the exchange created) must still have its own `whatsapp-<id>@noreply.askansari.ai` address and `registered_via = 'whatsapp'`.
 
 **Conflict.** A BSUID already linked to user A, whose new `wa_id` is held by user B → ineligible (500 plus an alert, then an operator repair). Never a silent merge.
 
-**Link notice.** On every link, the account's email, when it has one (not a noreply address), gets a notice that WhatsApp was linked, through the existing mailer, so a wrong link is visible to the real owner. The runbook gets an **unlink procedure**.
-
 **Phone update.** For a BSUID already linked: a provided number different from the stored one, and held by no one else, replaces it (verified). Held by another user → the conflict above.
 
-**Threat model, stated as the feature.** The delegation boundary widens. The exchange may mint for **any non-admin user whose verified phone number the WhatsApp service presents**, not only for users it created itself. The per-key budgets and alerts are the bound on a leaked key.
+**Unlink** (runbook, and a `service-keys`-style script subcommand if it is more than three statements). In one transaction:
+- remove the `whatsapp` account row;
+- clear `phone_number` and `phone_number_verified` on that account;
+- revoke all its sessions.
 
-#### 5.5 Residual (verbatim, security architect)
+The next message from that BSUID then creates a fresh user holding the number.
 
-A phone number recycled by a carrier to a new person yields a new BSUID with the old owner's number, which links the new person to the old owner's account; the link notice and the unlink procedure are the mitigation; Meta regenerates BSUIDs on number change but cannot tell us about recycling.
+**Threat model, stated as the feature.** The delegation boundary widens. The exchange may mint for any non-admin user that verified the number the WhatsApp service presents and has its own sign-in method (a claim), as well as for the users it created. The per-key budgets and alerts are the bound on a leaked key. WhatsApp-only accounts are never claimed.
+
+#### 5.5 Residual (security architect)
+
+A recycled number can claim an email-or-social account that verified that number; the mitigation is the link notice, the per-link alert and the unlink procedure. WhatsApp-only accounts are never claimed: a recycled number supersedes them (a new user; the old one keeps its threads, orphaned).
 
 #### 5.6 Success criteria (amendment)
 
 - [ ] `0001` creates `phone_number text UNIQUE` and `phone_number_verified boolean NOT NULL DEFAULT false` on `auth.users`. The schema and journal-parity tests cover both, and a test checks the schema against better-auth's own model of the configured auth (`getAuthTables`).
-- [ ] `phoneNumber()` is enabled and its five routes are reachable. Each answers **byte-identically** for a known and an unknown number; the stub sender's typed error maps to the one 4xx body; per-phone budgets bind on each route, keyed by a hash of the number.
-- [ ] **Verified by construction:** the exchange writes `verified = true`. Sign-up with a `phoneNumber` field is refused and writes nothing. A pinning test proves no path leaves a number unverified.
-- [ ] **Claim:** an existing verified holder → the `whatsapp` row is linked to it, there is still one user, and the token names that user. A holder that is an admin → refused (500 plus an alert), no row written.
+- [ ] `phoneNumber()` is enabled and its five routes are reachable. Each answers **byte-identically** for a known and an unknown number. The stub sender's typed error maps to the one 4xx body. Per-phone budgets bind on each route, keyed by a hash of the number.
+- [ ] **Verified by construction:** the exchange writes `verified = true`. Sign-up with a `phoneNumber` field is refused, in the hook and in the guard, and writes nothing. `signUpOnVerification` is off, and that is pinned. A pinning test proves no path leaves a number unverified.
+- [ ] **Claim:** a holder with a `credential` row (and, separately, with only a social row) → the `whatsapp` row is linked, there is still one user, the token names that user, one notice is sent and a `whatsapp-linked` alert is raised.
+- [ ] **Supersede:** a WhatsApp-only holder → its number and verified flag are cleared, its sessions are revoked, a new user is created with the number, a `number-superseded` alert is raised, and the old user's rows are otherwise untouched.
+- [ ] **Refuse:** a holder that is an admin, has another role, or holds a `service` row → 500 plus an alert, nothing written.
 - [ ] **Conflict:** a BSUID linked to A presenting a number held by B → 500 plus an alert, no change to either user.
-- [ ] **Notice:** a link to a user with a real email sends one notice through the mailer. A link to a noreply-address user sends none.
-- [ ] **Eligibility matrix (amended):** these are eligible: an exchange-created user, and a user with a `credential` row plus this `whatsapp` row. These get 500 plus an alert: any other provider row, an admin or any role other than `user`, an exchange-created user whose address or `registered_via` was changed, a `whatsapp` row whose `account_id` is not this BSUID.
+- [ ] **Concurrency:** a forced unique violation on `phone_number` is retried once through the rules, leaving one holder.
+- [ ] **Eligibility matrix (amended):**
+  - eligible: an exchange-created user; a user with a `credential` row plus this `whatsapp` row; a user with a social row plus this `whatsapp` row;
+  - 500 plus an alert: an admin or any role other than `user`; a `service` row; a second `whatsapp` row; a `whatsapp` row whose `account_id` is not this BSUID; an exchange-created user whose address or `registered_via` was changed.
+- [ ] **Unlink:** the procedure (and its script subcommand, if any) removes the row, clears both columns and revokes the sessions; the next exchange for that BSUID creates a fresh user holding the number.
 - [ ] **Exposure (amended):** the number appears in the user's own `get-session` and sign-in responses, and nowhere else. It is absent from `/api/account/me`, apps/api, every log, Sentry event and alert, and every rate-limit key.
-- [ ] The runbook gives the unlink procedure; the spec's threat model and residual read as §5.4 and §5.5.
+- [ ] The spec's threat model and residual read as §5.4 and §5.5. The runbook explains the two new alert kinds and the unlink procedure.
 
-#### 5.7 Open points, raised with the security architect before planning
+#### 5.7 Resolved with the security architect (2026-10-29)
 
-1. **A Google user is not claimable** under "at most a `credential` row": a web user who signed in with Google holds no `credential` row, so a link to them would be ineligible. Is that intended, or should any non-`service` provider row be allowed beside `whatsapp`?
-2. **The unlink procedure must also clear the number.** Unlinking deletes the `whatsapp` row, but if the old owner keeps the number, the next message from the same BSUID claims them again. The proposal: unlink deletes the row **and** clears `phone_number` / `phone_number_verified` on the old owner (the number is no longer theirs), and revokes that user's sessions.
-3. **Until a real OTP sender exists, every claim is WhatsApp to WhatsApp.** No web account can verify a number while `sendOTP` is a stub. So every holder is a user the exchange created: a recycled number, or the same person's new BSUID. Those holders have noreply addresses, so the link notice reaches no one. The residual in §5.5 has **no** working mitigation until either the sender exists or the operator watches a per-link alert. Should the exchange raise an alert (counts only) on every link, so the operator sees them?
-4. **`signUpOnVerification` stays off** (the default), so `/phone-number/verify` never creates a user. Confirm.
+1. **Who can be claimed:** `role = 'user'`, no `service` row, and at least one sign-in method other than WhatsApp (a `credential` row or any social provider row). This replaces "at most a `credential` row".
+2. **Unlink also clears the number** and revokes the sessions, so the next message creates a fresh user.
+3. **WhatsApp-only holders are superseded, not claimed** (§5.4). A counts-only alert is raised on every link, and on every supersede.
+4. **Sign-up refuses an unverified `phone_number`** in the hook and in the guard, pinned; `signUpOnVerification` stays off, pinned.
 
 ## Success Criteria
 
@@ -571,7 +595,7 @@ A small table of hashed keys with permissions and limits, verified by apps/auth'
 | Conflicts with other work landing on `develop` | Medium | Low | Reconciled on the branch before merge; tests pin behaviour |
 | A plugin or core bump changes relied-on behaviour | Medium | Medium | Each behaviour pinned by a test; plugin pinned to core |
 | The stored phone number leaks (response, log, Better Auth output, apps/api) | Low | High | One column; `input: false` and `returned: false`; absent from `/api/account/me`; never-log list and capture tests; Sentry scrubbing |
-| A recycled phone number links a new person to the old owner's account (§5.5) | Low | High | Link notice to a real email; unlink procedure; per-link alert (open point §5.7.3) |
+| A recycled phone number claims an email-or-social account that verified it (§5.5) | Low | High | Link notice to its email; per-link alert; unlink procedure. WhatsApp-only holders are superseded, never claimed |
 | OTP routes used to enumerate numbers, or for SMS pumping once a sender exists | Medium | Medium | One 4xx body for every refusal on all five routes; per-phone budgets keyed by a hash; the stub sender sends nothing today |
 | A Meta format or enrolment change splits users | Low | Medium | Sanity bounds only, so real users are never refused; the creation-volume signal surfaces a jump; continuity is deferred work (Nice-to-know 19) |
 
