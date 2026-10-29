@@ -48,11 +48,11 @@ The facilitator (`apps/api/lib/facilitator/agent.ts`) answers via a Gemini tool 
 
 ## Monorepo layout, build & deploy
 
-The repo is a pnpm workspace of `apps/*` + `packages/*`, driven by Turborepo.
+The repo is a pnpm workspace of `apps/*` and `packages/*`, driven by Turborepo. `apps/mcp` is the standalone MCP application; it consumes public saga a2ui packages and has no dependency on the other applications. Run it explicitly with `pnpm mcp dev`. Like the API and auth images, its image builds from the repo root (see Docker build context below). The root Markdown adapter override preserves the supported SAGA-owned A2UI dependency combination.
 
 **Layout & task running.** Root tasks fan out through one cached Turborepo task graph; `pnpm dev` starts api, auth and frontend (`pnpm dev:no-auth` skips auth). Target a single package with `pnpm api <script>` / `pnpm auth <script>` / `pnpm frontend <script>`, or by running from inside the app directory.
 
-**Docker build context.** Both images build from the repo root, never from the app directory — the pnpm workspace needs the root lockfile and both images `COPY packages packages`. The Dockerfile invocation is always `-f apps/<app>/Dockerfile …` with `.` as the build context.
+**Docker build context.** All three images (api, auth, mcp) build from the repo root, never from the app directory — the pnpm workspace needs the root lockfile and every image does `COPY packages packages`. The Dockerfile invocation is always `-f apps/<app>/Dockerfile …` with `.` as the build context.
 
 **Strict env mode.** Turborepo runs in strict env mode: a variable not declared in `turbo.json` is invisible to tasks and absent from the cache key. Adding an env var means adding it to `globalEnv`, derived by four methods — the Zod schema in `apps/api/lib/config.ts`, a static `process.env.X` grep, a dynamic `process.env[` grep followed to its call-site literals, and the documented surface (`docs/self-hosting.md`, `.env.example`) for variables consumed by dependencies. Each method catches variables the others miss.
 

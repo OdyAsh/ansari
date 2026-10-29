@@ -42,13 +42,17 @@ packageExtensions:
       "@babel/traverse": ^7.27.1
       "@babel/generator": ^7.27.1
 
-# Security overrides for Dependabot alerts on TRANSITIVE deps we cannot bump
+# Dependency overrides. Security fixes below cover TRANSITIVE deps we cannot bump
 # directly. pnpm reads overrides ONLY from here (or root package.json `pnpm.overrides`);
 # an `overrides` key inside an app's package.json is npm syntax and is silently
 # ignored by pnpm — that is how these alerts stayed open after the npm→pnpm move.
 # Each entry names the consumer that pins the vulnerable range; drop an entry
 # once that consumer resolves a patched version on its own.
 overrides:
+  # Compatibility: A2UI React 0.13 needs adapter 0.2.1 (0.2.2 requires web_core 0.14).
+  "@a2ui/react@0.13.0>@a2ui/markdown-it": "0.2.1"
+
+  # Security overrides for transitive Dependabot alerts.
   # next@15.5 declares optionalDependencies.sharp ^0.34.3 — GHSA-f88m-g3jw-g9cj
   sharp: ^0.35.0
   # next@15.5 pins postcss 8.4.31 exactly — GHSA-6g55-p6wh-862q, GHSA-r28c-9q8g-f849,

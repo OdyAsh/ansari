@@ -21,6 +21,6 @@ describe('root test script', () => {
       scripts: Record<string, string>;
     };
 
-    expect(scripts.test).toBe('turbo run test -- --maxWorkers=4');
+    expect(scripts.test).toBe('turbo run test --filter=!ansari-mcp -- --maxWorkers=4');
   });
 });
