@@ -2,7 +2,7 @@
 
 ## Summary
 
-apps/auth gains service identity through `@better-auth/api-key` (pinned to core 1.7.7): a service is one credential-less auth user, its keys are issued only by `apps/auth/scripts/service-keys.ts`, and the plugin's HTTP surface is blocked. Phase 6 adds `POST /api/whatsapp/session`, which turns a `whatsapp: mint` key and a BSUID into the ordinary EdDSA `{sub, sid}` JWT, only ever for a WhatsApp user. A second reserved domain, `@noreply.askansari.ai`, is refused on every public path. Seven phases, each approved by Codex (the Gemini lane was skipped in every round). The end-to-end test shows an exchange token passing apps/api's `requireUser` unchanged, and apps/api gains no WhatsApp code. Two items stay open, neither of which this PR can close: applying migration `0001` to staging before the merge (owner decision, 2026-10-28; production gets the whole auth journal at its cutover), and the staging smoke, which #327's builder runs.
+apps/auth gains service identity through `@better-auth/api-key` (pinned to core 1.7.7): a service is one credential-less auth user, its keys are issued only by `apps/auth/scripts/service-keys.ts`, and the plugin's HTTP surface is blocked. Phase 6 adds `POST /api/whatsapp/session`, which turns a `whatsapp: mint` key and a BSUID into the ordinary EdDSA `{sub, sid}` JWT, only ever for a WhatsApp user. A second reserved domain, `@noreply.askansari.ai`, is refused on every public path. Eight phases, each approved by Codex (the Gemini lane was skipped in every round). Phase 8 implements owner amendment 2 (2026-10-30): no phone number is stored anywhere, and a `phone_number` the WhatsApp service sends is accepted and ignored. Amendment 1 (better-auth's phone-number plugin and claiming accounts by number) was withdrawn before being built; the record is in the appendix. The end-to-end test shows an exchange token passing apps/api's `requireUser` unchanged, and apps/api gains no WhatsApp code. Two items stay open, neither of which this PR can close: applying migration `0001` to staging before the merge (owner decision, 2026-10-28; production gets the whole auth journal at its cutover), and the staging smoke, which #327's builder runs.
 
 ## Spec Compliance
 
@@ -10,7 +10,7 @@ Owner phase per the plan's criterion table. Where the plan named a test, that te
 
 **Service keys and scripts**
 - [x] Plugin pinned to exactly 1.7.7; core not bumped (Phase 1)
-- [x] `apikey` table in the `auth` schema; migration `0001` with `unique(provider_id, account_id)` and `auth.users.phone_number`, generated and reviewed as SQL; schema and journal-parity tests (Phase 1). `0001` is applied to staging before the merge; `AUTH_DEPLOYED_THROUGH` stays `null` until main sets it at the production cutover (see Follow-up).
+- [x] `apikey` table in the `auth` schema; migration `0001_api_key` with `unique(provider_id, account_id)` and no phone column (regenerated in place by phase 8; it was applied nowhere), generated and reviewed as SQL; schema, journal-parity and better-auth model tests (Phases 1 and 8). `0001` is applied to staging before the merge; `AUTH_DEPLOYED_THROUGH` stays `null` until main sets it at the production cutover (see Follow-up).
 - [x] Boot refuses on `42P01` or a missing constraint, bound to `auth.account` and the exact column order (Phase 6, tightened in review iteration 1)
 - [x] Database unreachable at boot → starts, `/health` 503, recovers without a restart (Phase 6; production-shaped run, steps 4 to 5a)
 - [x] Blocked list derived from `apiKey().endpoints` (7 endpoints, 5 routed), the full variant list, `/verify` and `/delete-all-expired-api-keys` covered by the prefix; the prefix proven load-bearing (Phase 1)
@@ -49,8 +49,9 @@ Owner phase per the plan's criterion table. Where the plan named a test, that te
 - [x] Concurrency: a forced unique conflict yields one user; a ban between lookup and lock is seen under the lock; the source-level placement assertion; probe 4 F1 to F4 on real Postgres (Phase 5)
 
 **Exchange: privacy, logging, transport**
-- [x] BSUID only in `account.account_id`; phone only in `auth.users.phone_number`, with create, update and untouched cases (Phase 5)
-- [x] `phone_number` refused as input on sign-up and absent from every response (Phase 1)
+- [x] BSUID only in `account.account_id` (Phase 5)
+- [x] **Amendment 2: no phone number stored anywhere.** `phone_number` in seven shapes → 200, and an all-tables scan of `auth` finds none of them; the end-to-end test scans the auth side too; a source check finds no code reading it; a sign-up carrying it leaves it in no row (Phase 8)
+- [x] `auth.users` has no `phone_number` column, and the schema matches better-auth's own model of the configured auth, with one documented deviation (`apikey.reference_id` uuid with a foreign key) (Phase 8)
 - [x] No raw key, hash, session token, BSUID, phone or driver error in any captured log (Phase 6)
 - [x] Logger redacts to `{name, code}`, is not silenced, near misses survive (Phase 2)
 - [x] Exchange Sentry events carry no body, `Authorization` or phone, with a negative control (Phase 6)
@@ -94,12 +95,16 @@ Owner phase per the plan's criterion table. Where the plan named a test, that te
 - **Phase 5:** eligibility requires the exact address `whatsapp-<id>@noreply.askansari.ai`, which is stricter than any address under the domain. Lifetimes moved to `src/lifetimes.ts`. Signing after the commit is the approved plan (plan iteration 2, P1). The spec's §2 sentence that put signing inside the transaction was amended to match.
 - **Phase 6:** there is one constant beyond the plan's list, `EXCHANGE_ALERT_WINDOW`. The catalog lookup `hasAuthUniqueConstraint` lives in packages/auth, because apps/auth has no `drizzle-orm`. The window alert is deduplicated by the time since it last fired, because the plugin's window resets after a gap rather than on a fixed clock.
 - **Phase 7:** the key log is a table at the end of the runbook; the spec named it and the plan did not place it.
-- **Review phase (security architect):** an explicit `"phone_number": null` is now accepted as absent (200, a stored number untouched) instead of 400. The contract calls the field optional, and JSON clients commonly send `null` for an absent field. The spec's request row is amended, `docs/self-hosting.md` says so, and the body tests swap the 400 case for a 200 case (red without the route change).
+- **Review phase (security architect, superseded by phase 8):** an explicit `"phone_number": null` was accepted as absent (200, a stored number untouched) instead of 400. Phase 8 goes further: every shape is accepted and ignored. The contract calls the field optional, and JSON clients commonly send `null` for an absent field. The spec's request row is amended, `docs/self-hosting.md` says so, and the body tests swap the 400 case for a 200 case (red without the route change).
 - **Review phase (gitleaks):** the probes' invented placeholder secrets are gone. `setProbeEnv` now calls `setAuthEnv` and overrides only `DATABASE_URL`, so the probes print the test issuer and audience (`auth.test.example`, `ansari-api-test`), not the `probe` ones shown in the appendix's earlier runs. The two literals stay in branch history, so `.gitleaks.toml` allowlists them as adjudicated fixtures (the run is under "Secret scan (gitleaks)" below).
 
 - **Review phase (security architect, PR-gate pass 2):** **service-wide, Sentry keeps no breadcrumbs.** `SERVICE_SENTRY_OPTIONS` now sets `maxBreadcrumbs: 0` and `beforeBreadcrumb: () => null` for all of apps/auth, not only the exchange. Nothing relies on breadcrumbs, and the ineligible-user log line (a user id) otherwise rode on the alert as a console breadcrumb. Per-key alerts carry the key id (`keyId`, as `list` prints it) instead of an 8-character hash prefix: a key id names a credential, not a person. The fire-once alerts lose their count fields (always 1 or the threshold), and the runbook says they mark the first occurrence in the window. `hashPrefix` was removed as unused.
 
 - **Review phase (security architect, PR-gate pass 1):** eligibility now requires the role to be **exactly `user`**, an allowlist. Before, it refused only `admin`, which missed `user,admin` (which better-auth's admin plugin reads as admin) and unknown roles. The reason is renamed from `admin` to `role` in code, the runbook and the doc test. `update-limits` and `revoke` now confirm with the **key's** id, not the service user's. `--name` and `--client-id` are restricted to an inert charset (1 to 64 characters) with key-shaped values refused. With no `SENTRY_DSN`, the script takes the unrecorded path on purpose, through an explicit `unrecordedRecorder`.
+
+- **Owner amendments 1 and 2 (2026-10-30):** amendment 1 (the phone-number plugin and claiming accounts by number) was folded into the spec, planned as phase 8 and reviewed, then withdrawn by the owner before any of it was built. Amendment 2 ("drop phone number entirely, whatsapp id is enough") replaced it: phase 8 removed the phone number, reversing owner decision D3. Porch was rolled back from review to plan for this.
+- **Phase 8 (choices inside the plan):** the migration was regenerated in place under a new tag, `0001_api_key`, since the old name would mislead (agreed with the security architect, main informed). Step 1 (T12, `0001` applied nowhere) rests on the owner's written record; the two read-only queries were not run, because the apply step never ran.
+- **Porch re-walk:** the rollback reset every plan phase. Phases 1 to 7 were re-walked by replaying their recorded reviews, with no code change and no new consult (appendix).
 
 - **Merge of develop with #334 (2026-10-29):** the exchange's Sentry scrub is now #334's `scrubRequestEvent`, applied to every request. An exchange event keeps its method, path and the `host`, `user-agent` and `content-type` headers, where the exchange-only scrub kept method and path. None of those headers carries a key, BSUID or phone number. The phase 6 notes below describe the exchange-only scrub as it was then.
 
@@ -223,6 +228,16 @@ Round 2: Codex APPROVE.
 - **B (blocking)**: `copy.sh --dry-run` on a schema-less database applied only the static `0000` → **Addressed** (05554db). `02-import-auth.sql` includes `:dry_run_baseline`, which is `auth-journal.mjs sql` (every file in order, then an assertion that each migration is present) read from a file descriptor that `copy.sh` holds open, so no file is written. The psql test harness gained `\i`. Tests: the baseline order, and a baseline of `0000` plus the full-journal assertion that fails naming `0001` (red against the old `\ir 0000`). Real-Postgres dry run below.
 - The runbooks' wording, verbatim from main, goes in the service-keys runbook's staging half (d177e80): the apply discipline, and the duplicate pre-check only where data exists.
 
+### Plan (Round 3, owner amendment 1, withdrawn)
+
+#### Codex (REQUEST_CHANGES), plus the security architect's T1-T20 and the external round (Codex and Claude, both REQUEST CHANGES)
+- **Concerns**: Sentry injection for the stub sender; a claimable holder already linked; phone-number normalisation; race assertions; wiring. T1 found the placeholder SMS sender left all five plugin routes live (confirmed by probe), and T2-T20 covered supersede, holder states, the canonical form, locking, HMAC keys and more → **N/A**: the owner withdrew amendment 1 before it was built (amendment 2). Only T12 carried into the new phase 8. The record is in `329-plan-iter2-rebuttals.md` and the appendix.
+
+### Phase 8 (Round 1)
+
+#### Codex (COMMENT)
+- **Concern**: the review document's summary still said seven phases, and its compliance list still described the stored phone number → **Addressed** in this review phase (summary, compliance, deviations, lessons).
+
 ## Lessons Learned
 
 ### What Went Well
@@ -235,6 +250,8 @@ Round 2: Codex APPROVE.
 
 - **Sentry leaks hidden by the test setup.** The key reached Sentry through console breadcrumbs, and the first test missed it because it turned default integrations off. Separately, the request-data integration attaches the body and `Authorization` to any event raised in a request. The script now has its own options and prints through stdout, the exchange has `beforeSend`, and the pre-existing leak on other paths went to the security architect.
 - **Signing inside the transaction hangs a small pool.** The spec first said to sign inside the transaction. Probe 4 E2 showed a pool of 2 hanging, so the plan moved signing after the commit and the spec text followed.
+- **A placeholder sender does not make an auth plugin safe.** better-auth's phone-number plugin with a `sendOTP` that throws still stored live codes, created sessions on verify, signed in by phone and password without calling the sender, and set passwords through reset-by-phone (probe, appendix). An unused plugin route is a live route. Amendment 1 was withdrawn before any of it shipped.
+- **Porch's rollback resets every plan phase.** After `porch rollback <id> plan`, phases already built and approved came back pending. Parent mode and `none` mode both dead-end for plan phases in this codev version. Normal mode replays the recorded review files, so the re-walk cost no new consults.
 - **Load-induced timeouts on the shared machine.** Load averages ran up to about 280, and 30 s pglite hooks failed across all four packages. The two files that blocked this branch's green runs got a measured deadline; the rest is recorded for main.
 
 ### What Would Be Done Differently
@@ -245,16 +262,18 @@ Round 2: Codex APPROVE.
 ### Methodology Improvements
 
 - porch's `tests` check truncates its output, so a one-off failure under load names no test (phase 7). Keeping the full log would make an unreproduced failure diagnosable.
-- The Gemini lane was skipped in all 16 rounds (`agy` exit 3), so each "3-way" review was Codex alone, plus the security architect's own rounds on the spec and plan. A preflight that refuses to start a consult round whose lanes cannot run would surface this before a round counts as reviewed.
+- porch: a rollback into a phased protocol should keep completed plan phases, or offer a skip; parent mode should register its `phase-review-*` gate so `porch approve` accepts it (today it emits a gate nothing can clear).
+- The Gemini lane was skipped in every round (`agy` exit 3), so each "3-way" review was Codex alone, plus the security architect's own rounds on the spec and plan. A preflight that refuses to start a consult round whose lanes cannot run would surface this before a round counts as reviewed.
 
 ## Architecture Updates
 
-- Routed: cold — `codev/resources/arch.md`, Authentication & Authorization — a new paragraph on service keys and the WhatsApp exchange (service identity, the issuing script, blocked plugin surface, eligibility under the lock, BSUID and phone storage, the noreply domain, alert posture, the boot check, the runbook). The first-use refusal is now stated as system domain only, with the reason. `grant-admin.ts` is corrected to refuse both reserved domains (also in `RELEASE.md`). (Phase 7)
+- Routed: cold — `codev/resources/arch.md`, Authentication & Authorization — a new paragraph on service keys and the WhatsApp exchange (service identity, the issuing script, blocked plugin surface, eligibility under the lock, BSUID storage, the noreply domain, alert posture, the boot check, the runbook). Phase 8 replaced the phone-storage sentence: no phone number is stored; the exchange accepts and ignores it. The first-use refusal is now stated as system domain only, with the reason. `grant-admin.ts` is corrected to refuse both reserved domains (also in `RELEASE.md`). (Phase 7)
 - Hot tier (`arch-critical.md`) unchanged. It is at its cap of 10 facts, and the service-key facts are subsystem detail that the Authentication map entry already routes to. The cross-cutting facts are untouched: two databases, the JWT shape, `ROUTER_RULES` all `false`, and migrations by hand.
 
 ## Lessons Learned Updates
 
 - Routed: cold — `codev/resources/lessons-learned.md`, new section "Service API keys and the WhatsApp exchange (spec 329)": `@better-auth/api-key` 1.7.7 behaviours (no-refill exhaustion deletes the key, an outage reported as `INVALID_API_KEY` after logging the raw error, `signJWT` without `iat`); the `FOR UPDATE` versus `FOR NO KEY UPDATE` hazard on a row other tables reference; pool starvation from a pooled call inside an open transaction; Sentry's console breadcrumbs and request data, and why `defaultIntegrations: false` hides them; drizzle putting the SQLSTATE on `cause`; a mutant surviving behind a cache.
+- Routed: cold — the same section, two more: an auth plugin's routes are live even with a placeholder sender (probe it before relying on it), and porch's rollback to plan resets every plan phase (parent and `none` modes dead-end; normal mode replays the recorded reviews).
 - Hot tier (`lessons-critical.md`): no lesson added, since it is at its cap of 10. The map entry for spec 300 now also names spec 329, so the map stays at its current count. Candidate for promotion at the next MAINTAIN: "a Sentry test with default integrations off cannot show what production sends".
 
 ## Flaky Tests
@@ -414,6 +433,7 @@ This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under 
 - **Migration `0001` (owner decision, 2026-10-28).** **Staging, before the merge:** the duplicate check on `auth.account (provider_id, account_id)`, then `0001` applied with `psql -X -v ON_ERROR_STOP=1 --single-transaction` and verified with the runbook's bound query. apps/auth refuses to boot without it, so the apply precedes the merge. **Production:** at the production cutover, the full auth journal as it stands then (`0000`, `0001` and any later migration) is applied in order before the promoted code deploys, owned by `docs/cutover/better-auth-cutover.md`. `develop` is not frozen. `AUTH_DEPLOYED_THROUGH` stays `null`, with no `auth-journal-applied` record in this PR (security architect; main to confirm): it is production truth, and main sets it at the cutover. apps/api's `DEPLOYED_THROUGH` is not touched.
 - **Staging smoke** (#327's builder): a phone-visible user, a phone-hidden user, and 5 messages in 1 s, using a key from the script. Expected: 5 answers, 1 user, 1 session. Recorded as a comment on PR #327. #327 also switches to `Authorization: Bearer` and the error shapes in the contract summary, and carries spec 321's amendment.
 - ~~**Pre-existing Sentry request-data leak** on apps/auth's other paths~~ **Fixed by #334** (merged to develop 2026-10-29). When develop was merged into this branch, `alerts.ts` was resolved as the security architect specified: one `SERVICE_SENTRY_OPTIONS` whose `beforeSend` is #334's unconditional `scrubRequestEvent`, a superset of this PR's exchange-only `scrubExchangeEvent`, which was deleted. `WHATSAPP_SESSION_PATH` and the breadcrumb reasons were kept. The 'another path is left as it is' test is inverted (every path is now scrubbed), and `SCRIPT_SENTRY_OPTIONS` notes that a CLI needs no `beforeSend`. Both apps' Sentry suites pass (apps/auth 90, apps/api 4). Removing `beforeSend` turns 3 red, including this PR's exchange case.
+- **#327 stops sending `phone_number`** (the security architect asks its author through the community architect); then a later PR removes the field from the exchange's contract, and spec 321's "never sent on" rule applies again.
 - **Monorepo-wide pglite 30 s timeouts under load** (evidence under Flaky Tests), for main.
 - **#314 (MCP):** the verify route at the public origin, the apps/api client, and its own key bounds (`ansari-mcp` borrows `WHATSAPP_KEY_BOUNDS` until then).
 - **Plugin upgrade:** `@better-auth/api-key` past 1.7.7 needs core ≥ 1.7.14; bump them together and rerun the pinning probes.
