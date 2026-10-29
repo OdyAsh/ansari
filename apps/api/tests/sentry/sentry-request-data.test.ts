@@ -13,17 +13,22 @@ import { captureRequestEnvelopes, initSentry } from "./request-envelopes";
 beforeAll(() => initSentry(SENTRY_REQUEST_PRIVACY));
 afterAll(() => Sentry.close());
 
-it("an event raised inside a request with a bearer carries no Authorization header, cookie, client IP, body or query", async () => {
+it("an event raised inside a request with a bearer carries no Authorization header, cookie, client IP, body, query or search terms", async () => {
   const { items, leaked } = await captureRequestEnvelopes();
   expect(items.map(([header]) => header.type).sort()).toEqual(["event", "event", "transaction"]);
   for (const [, event] of items) {
-    expect(event.request?.method).toBe("POST");
+    expect(event.request?.method).toBe("GET");
     expect(event.request?.headers).toMatchObject({ host: "api.example.test" });
   }
   expect(leaked).toEqual([]);
 });
 
-it("leaves Sentry's data collection at its private defaults", () => {
+// These pins exist to fail on an upgrade or an option change, not to document
+// the defaults: Sentry v11 removes `sendDefaultPii` and collects by default,
+// and under `traceLifecycle: 'stream'` spans skip beforeSendTransaction and
+// need a streamed beforeSendSpan.
+it("leaves Sentry's data collection and span lifecycle at what the scrub was written for", () => {
+  expect(Sentry.getClient()?.getOptions().traceLifecycle ?? "static").toBe("static");
   const resolved = Sentry.getClient()?.getDataCollectionOptions();
   expect(resolved).toMatchObject({
     userInfo: false,

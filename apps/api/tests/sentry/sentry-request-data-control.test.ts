@@ -9,10 +9,10 @@ import { captureRequestEnvelopes, FIXTURES, initSentry } from "./request-envelop
 beforeAll(() => initSentry({}));
 afterAll(() => Sentry.close());
 
-it("without the scrub, the same envelopes carry the bearer, cookie, body and query", async () => {
+it("without the scrub, the same envelopes carry every fixture", async () => {
+  // The SDK drops the client-IP headers itself while `userInfo` is off, but
+  // the IP still leaks through its span attribute; the search terms through
+  // the outgoing fetch's breadcrumb.
   const { leaked } = await captureRequestEnvelopes();
-  // The SDK itself drops the client-IP headers while `userInfo` is off (the
-  // `sendDefaultPii: false` default); sentry-request-data-collect-all.test.ts
-  // proves the scrub drops them when it is on.
-  expect(leaked.sort()).toEqual(Object.keys(FIXTURES).filter((name) => name !== "ip").sort());
+  expect(leaked.sort()).toEqual(Object.keys(FIXTURES).sort());
 });

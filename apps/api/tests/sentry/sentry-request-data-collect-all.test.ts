@@ -14,7 +14,7 @@ import { captureRequestEnvelopes, initSentry } from "./request-envelopes";
 beforeAll(() => initSentry({ ...SENTRY_REQUEST_PRIVACY, dataCollection: { userInfo: true } }));
 afterAll(() => Sentry.close());
 
-it("under collect-all settings, the scrub still keeps the bearer, cookie, client IP, body and query out", async () => {
+it("under collect-all settings, the scrub still keeps every fixture out", async () => {
   expect(Sentry.getClient()?.getDataCollectionOptions()).toMatchObject({ userInfo: true, cookies: true });
   const { leaked } = await captureRequestEnvelopes();
   expect(leaked).toEqual([]);

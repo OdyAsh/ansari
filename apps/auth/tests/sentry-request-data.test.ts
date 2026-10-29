@@ -4,9 +4,11 @@
 // Production-shaped: default integrations on, only the transport replaced. Its
 // own file: the Console integration patches `console` process-wide.
 //
-// Assertions name which fixture leaked, never its value.
+// Assertions name which fixture leaked, never its value. `console.warn` is a
+// no-op here (installed before the first init, so the Console integration
+// still records it as a breadcrumb): the probe's log line carries a fixture.
 import * as Sentry from '@sentry/node';
-import { afterAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 
 import { limits } from '@ansari/auth';
 
@@ -18,6 +20,7 @@ import {
   sendListWalkAlert,
 } from '../src/alerts';
 import { send, signUp, startService } from './helpers/service';
+import type { FailedSignInAlert } from '../src/alerts';
 
 const FIXTURES = {
   password: 'ProbePasswordMarker-123',
@@ -25,13 +28,29 @@ const FIXTURES = {
   bearer: 'SESSIONTOKENMARKER',
   cookie: 'COOKIEVALUEMARKER',
   query: 'QUERYVALUEMARKER',
+  logLine: 'LOGLINEMARKER',
 };
 
-type CapturedEvent = { message?: string; request?: Record<string, unknown> };
+type CapturedEvent = { message?: string; request?: { headers?: Record<string, string> } & Record<string, unknown> };
+
+beforeAll(() => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+});
 
 afterAll(async () => {
   await Sentry.close();
+  vi.restoreAllMocks();
 });
+
+/**
+ * A log line that names a user, written in the request before the alert, as
+ * the WhatsApp exchange's ineligible-user line is (#331): only the breadcrumb
+ * options keep it out of the event.
+ */
+function failedSignInAlertAfterALogLine(alert: FailedSignInAlert): void {
+  console.warn('probe: a log line that names a user', FIXTURES.logLine);
+  sendFailedSignInAlert(alert);
+}
 
 /**
  * Walk LIST_WALK_ALERT.distinctEmails emails to their per-email lock: that
@@ -52,7 +71,7 @@ async function captureAlertEnvelopes(options: Sentry.NodeOptions) {
       flush: async () => true,
     }),
   });
-  const service = await startService({ alert: sendListWalkAlert, failedSignInAlert: sendFailedSignInAlert });
+  const service = await startService({ alert: sendListWalkAlert, failedSignInAlert: failedSignInAlertAfterALogLine });
   try {
     await signUp(service, `${FIXTURES.emailInBody}@example.com`);
     for (let i = 0; i < limits.LIST_WALK_ALERT.distinctEmails; i++) {
@@ -86,7 +105,8 @@ it('a failed-sign-in alert event carries no password, no email from the body and
   const { events, leaked } = await captureAlertEnvelopes(SERVICE_SENTRY_OPTIONS);
   expect(events.map((e) => e.message).sort()).toEqual([FAILED_SIGN_IN_MESSAGE, LIST_WALK_MESSAGE].sort());
   for (const event of events) {
-    expect(Object.keys(event.request ?? {}).sort()).toEqual(['method', 'url']);
+    expect(Object.keys(event.request ?? {}).sort()).toEqual(['headers', 'method', 'url']);
+    expect(Object.keys(event.request?.headers ?? {}).sort()).toEqual(['content-type', 'host', 'user-agent']);
     expect(event.request?.method).toBe('POST');
     expect(event.request?.url).toMatch(/\/api\/auth\/sign-in\/email$/);
   }
@@ -99,7 +119,14 @@ it('negative control: without the scrub, the same alert events carry the body, h
   for (const event of events) {
     expect(Object.keys(event.request ?? {})).toEqual(expect.arrayContaining(['data', 'headers']));
   }
-  expect(leaked.sort()).toEqual(Object.keys(FIXTURES).sort());
+  // The log line is a breadcrumb, which the breadcrumb options still drop.
+  expect(leaked.sort()).toEqual(Object.keys(FIXTURES).filter((name) => name !== 'logLine').sort());
+}, 120_000);
+
+it('negative control: with breadcrumbs on, the alert event carries the log line', async () => {
+  const breadcrumbsOn = { ...SERVICE_SENTRY_OPTIONS, maxBreadcrumbs: undefined, beforeBreadcrumb: undefined };
+  const { leaked } = await captureAlertEnvelopes(breadcrumbsOn);
+  expect(leaked).toContain('logLine');
 }, 120_000);
 
 it("leaves Sentry's data collection at its private defaults", async () => {

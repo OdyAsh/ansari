@@ -35,16 +35,25 @@ export type FailedSignInAlert = {
 export const FAILED_SIGN_IN_MESSAGE = 'auth: failed sign-ins over the alert threshold, every email together (spray?)';
 
 /**
+ * Headers an event may keep: none is a credential, and the user agent is one
+ * of the few things that tells a botnet spray from a broken client.
+ */
+const KEPT_HEADERS = new Set(['host', 'user-agent', 'content-type']);
+
+/**
  * Sentry's request-data integration attaches the in-flight request (headers,
  * cookies, query string and body) to every event raised while it is handled:
  * a sign-in's email and password, a bearer. `sendDefaultPii: false` does not
  * cover bodies or the Authorization header, so every event keeps only the
- * request's method and path.
+ * request's method, path and the headers in KEPT_HEADERS.
  */
 export function scrubRequestEvent<E extends Sentry.Event>(event: E): E {
   const request = event.request;
   if (!request) return event;
-  event.request = { method: request.method, url: request.url?.split('?')[0] };
+  const headers = Object.fromEntries(
+    Object.entries(request.headers ?? {}).filter(([name]) => KEPT_HEADERS.has(name.toLowerCase()))
+  );
+  event.request = { method: request.method, url: request.url?.split('?')[0], headers };
   return event;
 }
 
