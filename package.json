@@ -10,14 +10,15 @@
     "api": "pnpm --filter ansari-api",
     "frontend": "pnpm --filter ansari-frontend",
     "auth": "pnpm --filter ansari-auth",
-    "dev": "turbo run dev --ui=tui",
-    "dev:no-auth": "turbo run dev --ui=tui --filter=!ansari-auth",
+    "dev": "turbo run dev --ui=tui --filter=!ansari-mcp",
+    "dev:no-auth": "turbo run dev --ui=tui --filter=!ansari-auth --filter=!ansari-mcp",
     "dev:auth": "pnpm --filter ansari-auth dev",
     "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck",
-    "test": "turbo run test --",
-    "test:coverage": "turbo run test:coverage --",
-    "build": "turbo run build"
+    "typecheck": "turbo run typecheck --filter=!ansari-mcp",
+    "test": "turbo run test --filter=!ansari-mcp --",
+    "test:coverage": "turbo run test:coverage --filter=!ansari-mcp --",
+    "build": "turbo run build --filter=!ansari-mcp",
+    "mcp": "pnpm --filter ansari-mcp"
   },
   "devDependencies": {
     "turbo": "2.10.11"
