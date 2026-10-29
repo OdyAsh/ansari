@@ -238,6 +238,14 @@ Round 2: Codex APPROVE.
 #### Codex (COMMENT)
 - **Concern**: the review document's summary still said seven phases, and its compliance list still described the stored phone number → **Addressed** in this review phase (summary, compliance, deviations, lessons).
 
+### PR review, extra Codex pass on the phase 8 diff (security architect's request, 2026-10-30)
+
+In the review phase, porch replayed the recorded PR reviews of 2026-10-28, so no fresh PR-level consult ran on phase 8. The security architect asked for one manually, as an extra artifact (`329-review-extra-phase8-codex.txt`), and ran their own Claude pass in parallel.
+
+#### Codex (COMMENT)
+- **Concern**: the PR body still said only the exchange is scrubbed, but since #334 `SERVICE_SENTRY_OPTIONS.beforeSend` scrubs every apps/auth request → **Addressed**: the PR body is corrected (Changes and "Known, out of scope").
+- **Concern**: migration `0001_api_key` remains a pre-merge staging gate → **N/A**: already documented as the merge precondition; no code change.
+
 ## Lessons Learned
 
 ### What Went Well
