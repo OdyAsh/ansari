@@ -2,7 +2,7 @@
 
 ## Summary
 
-The legacy Python WhatsApp service now lives in the monorepo as `apps/whatsapp`. It identifies users by their business-scoped user ID (BSUID), gets a JWT for them from `apps/auth`, and talks to `apps/api`, keeping one thread per user that is replaced after 3 hours of silence. Four phases (import, BSUID/JWT, thread lifecycle, environments and docs) were built and reviewed; 79 tests pass. It has run against a real `apps/api` and `apps/auth`, and Meta accepted one real send to a BSUID, but a real phone's message has never reached the new service, the Docker image has never been built, and the `apps/auth` `/whatsapp` route does not exist yet (the sign-in is mocked by owner decision).
+The legacy Python WhatsApp service now lives in the monorepo as `legacy/whatsapp`. It identifies users by their business-scoped user ID (BSUID), gets a JWT for them from `apps/auth`, and talks to `apps/api`, keeping one thread per user that is replaced after 3 hours of silence. Four phases (import, BSUID/JWT, thread lifecycle, environments and docs) were built and reviewed; 79 tests pass. It has run against a real `apps/api` and `apps/auth`, and Meta accepted one real send to a BSUID, but a real phone's message has never reached the new service, the Docker image has never been built, and the `apps/auth` `/whatsapp` route does not exist yet (the sign-in is mocked by owner decision).
 
 ## Spec Compliance
 
@@ -29,7 +29,7 @@ Not in the spec's list but part of the owner's Phase 4 requirement: real service
 - **Phase 4, no per-user lock.** The lock added in phase 3 was removed by the owner. A race on two near-simultaneous first messages can create two threads, and two overlapping answers can interleave in a thread's history. Both are accepted, documented in `_resolve_thread`, and cleaned up by an occasional manual sweep (keep the newest `whatsapp` thread per user).
 - **Phase 4, `WA_MAINTENANCE_MODE`.** Renamed from `WHATSAPP_UNDER_MAINTENANCE` and made independent of `apps/api`'s `MAINTENANCE_MODE` (owner decision); the spec was amended.
 - **Phase 4, logging.** Logs carry only `request_id` and are one JSON line per entry on stdout, the shape Railway indexes. This replaced the CloudWatch-shaped sink and the user-id tracking, and removed `get_subject`.
-- **Phase 4, extra deploy fixes.** The app reads `PORT`; the Dockerfile uses repo-root paths, uv 0.9.13 and `uv sync --frozen`; `apps/whatsapp/railway.toml` records settings (not read by Railway); a `.python-version` pins 3.13.
+- **Phase 4, extra deploy fixes.** The app reads `PORT`; the Dockerfile uses repo-root paths, uv 0.9.13 and `uv sync --frozen`; `legacy/whatsapp/railway.toml` records settings (not read by Railway); a `.python-version` pins 3.13.
 - **Phase 4, `MOCK_AUTH_TOKEN`.** A test-only setting so the mocked sign-in can return a real JWT to a real `apps/api`. Not in the plan.
 - **Real-Meta test.** The plan assumed a Meta test number; none could be claimed (a widespread Meta-side failure), so Meta's sample webhooks and one production-number send were used instead. See the PR description for the request for a shared staging and test number.
 
@@ -40,7 +40,7 @@ Only Claude was consulted (a decision for this environment, since the other mode
 ### import_service Phase (Round 1) , REQUEST_CHANGES
 
 #### Claude
-- **Concern**: no CI job for `apps/whatsapp` → **Addressed**: a `whatsapp` job was added to `ci.yml`, with the action pinned to a commit SHA.
+- **Concern**: no CI job for `legacy/whatsapp` → **Addressed**: a `whatsapp` job was added to `ci.yml`, with the action pinned to a commit SHA.
 - **Concern**: `ruff` configured but not declared → **Addressed**: added to the `dev` extra and locked.
 - **Concern**: READMEs reference files that do not exist → **Addressed** in phase 4 (both READMEs rewritten).
 - **Concern**: no test for a missing or invalid Meta signature → **Addressed**: two tests added, shown to fail when wrong.
@@ -133,7 +133,7 @@ See `codev/projects/321-rfc-whatsapp-support-in-the-mo/321-review-iter2-rebuttal
 
 ## Architecture Updates
 
-- Routed: cold, `codev/resources/arch.md` ("Monorepo layout, build & deploy") — `apps/whatsapp` is a Python service in the repo: identifies users by BSUID only, mints a JWT through `apps/auth` (route and header assumed, sign-in mocked until `apps/auth` has the route), calls `apps/api`'s `/chat`, logs one JSON line per entry on stdout with only `request_id`; deployed by Dockerfile `apps/whatsapp/Dockerfile` with the repo root as build context.
+- Routed: cold, `codev/resources/arch.md` ("Monorepo layout, build & deploy") — `legacy/whatsapp` is a Python service in the repo: identifies users by BSUID only, mints a JWT through `apps/auth` (route and header assumed, sign-in mocked until `apps/auth` has the route), calls `apps/api`'s `/chat`, logs one JSON line per entry on stdout with only `request_id`; deployed by Dockerfile `legacy/whatsapp/Dockerfile` with the repo root as build context.
 - No hot-tier change: both hot files are at their 10-fact cap and nothing here changes behaviour for builders working in other apps. Not demoted.
 
 ## Lessons Learned Updates
@@ -143,14 +143,14 @@ See `codev/projects/321-rfc-whatsapp-support-in-the-mo/321-review-iter2-rebuttal
 
 ## Flaky Tests
 
-No flaky tests encountered in `apps/whatsapp`. On native Windows, porch's whole-monorepo `npm test` check could not pass, so it was narrowed locally to `apps/whatsapp` through a git-ignored `.codev/config.json`; CI on Linux runs the stock checks for the other apps.
+No flaky tests encountered in `legacy/whatsapp`. On native Windows, porch's whole-monorepo `npm test` check could not pass, so it was narrowed locally to `legacy/whatsapp` through a git-ignored `.codev/config.json`; CI on Linux runs the stock checks for the other apps.
 
 ## Follow-up Items
 
 - Create a new WhatsApp phone number shared by staging and test (call to action for Waleed; see the PR description), since a Meta test number cannot be claimed.
 - Test the 4,000-character splitting; it has no test.
-- Confirm the `apps/auth` `/whatsapp` contract with Amr (route `POST /api/whatsapp/session`, header `X-Whatsapp-Api-Key`, variable `AUTH_WHATSAPP_API_KEY`, body `{bsuid}`, response `{token}`), then replace the mocked sign-in.
-- Build and run the Docker image; run the staging smoke test in `apps/whatsapp/README.md`.
+- Replace the mocked sign-in once `apps/auth` ships the route from issue #329 (`POST /api/whatsapp/session`, `Authorization: Bearer <AUTH_WHATSAPP_API_KEY>`, body `{bsuid}`, response `{token}`).
+- Build and run the Docker image; run the staging smoke test in `legacy/whatsapp/README.md`.
 - Raise with the `apps/api` owner: the chat routes save every message with `source: 'web'` even for WhatsApp threads.
 - Make the `whatsapp` CI job a required check on `develop` (needs a repo admin; the job has not yet run on a GitHub runner).
 - Occasional manual sweep: delete all but the newest `whatsapp` thread per user.

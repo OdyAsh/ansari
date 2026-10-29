@@ -167,3 +167,67 @@ def test_local_processes_messages_with_the_dev_prefix(monkeypatch):
 
     assert response.status_code == 200
     assert chat_calls == ["!d what is ansari?"]
+
+
+# ---------- start-up checks and request hardening (Amr's review of PR 327) ----------
+
+
+@pytest.mark.parametrize("deployment_type", ["local", "staging", "production"])
+def test_start_up_fails_without_the_app_secret(monkeypatch, deployment_type):
+    from ansari_whatsapp.utils.config import WhatsAppSettings
+
+    monkeypatch.setenv("DEPLOYMENT_TYPE", deployment_type)
+    monkeypatch.delenv("META_ANSARI_APP_SECRET")
+
+    with pytest.raises(ValueError, match="META_ANSARI_APP_SECRET"):
+        WhatsAppSettings(_env_file=None)
+
+
+@pytest.mark.parametrize(("deployment_type", "expected"), [("local", "DEBUG"), ("staging", "INFO"), ("production", "INFO")])
+def test_log_level_defaults_to_info_outside_local(monkeypatch, deployment_type, expected):
+    from ansari_whatsapp.utils.config import WhatsAppSettings
+
+    monkeypatch.setenv("DEPLOYMENT_TYPE", deployment_type)
+    monkeypatch.delenv("LOGGING_LEVEL", raising=False)
+    if deployment_type != "local":
+        for flag in ("MOCK_ANSARI_CLIENT", "MOCK_AUTH_CLIENT", "MOCK_META_API"):
+            monkeypatch.setenv(flag, "False")
+
+    assert WhatsAppSettings(_env_file=None).LOGGING_LEVEL == expected
+
+
+def test_an_explicit_log_level_wins(monkeypatch):
+    from ansari_whatsapp.utils.config import WhatsAppSettings
+
+    monkeypatch.setenv("LOGGING_LEVEL", "WARNING")
+
+    assert WhatsAppSettings(_env_file=None).LOGGING_LEVEL == "WARNING"
+
+
+def _sign(body: bytes) -> dict:
+    secret = get_settings().META_ANSARI_APP_SECRET.get_secret_value().encode("utf-8")
+    return {"X-Hub-Signature-256": "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()}
+
+
+@pytest.mark.parametrize("body", [b"this is not json", b"", b"\xff\xfe"])
+def test_a_signed_body_that_is_not_json_is_a_400_not_a_crash(body):
+    response = client.post("/whatsapp/v2", content=body, headers=_sign(body))
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "INVALID_PAYLOAD"
+
+
+def _handshake(token: str):
+    return client.get("/whatsapp/v2", params={"hub.mode": "subscribe", "hub.verify_token": token, "hub.challenge": "abc123"})
+
+
+def test_handshake_accepts_the_right_token_and_refuses_others():
+    right = get_settings().META_WEBHOOK_VERIFY_TOKEN.get_secret_value()
+
+    assert _handshake(right).text == "abc123"
+    assert _handshake(right + "x").status_code == 403
+    assert _handshake(right[:-1]).status_code == 403
+
+
+def test_handshake_with_a_non_ascii_token_is_refused_not_a_crash():
+    assert _handshake("t\u00e9st").status_code == 403

@@ -1,6 +1,8 @@
 # Real apps/auth client
 """Real client for apps/auth's `/whatsapp` token exchange, over HTTP."""
 
+import time
+
 import httpx
 from loguru import logger
 
@@ -8,9 +10,13 @@ from ansari_whatsapp.services.auth_client_base import AuthClientBase
 from ansari_whatsapp.utils.config import get_settings
 from ansari_whatsapp.utils.exceptions import AuthTokenError
 
-# Assumed contract (spec 321): POST /api/whatsapp/session, {"bsuid": ...} -> {"token": ...}
+# Contract (issue #329): POST /api/whatsapp/session with `Authorization: Bearer <key>`, {"bsuid": ...} -> {"token": ...}.
+# Errors are {"message"} bodies: 400 malformed BSUID, 401 any key failure, 500 otherwise.
 SESSION_PATH = "/api/whatsapp/session"
-API_KEY_HEADER = "X-Whatsapp-Api-Key"
+
+# The token lives 15 minutes; reuse it for a bit less so a cached one never expires mid-request
+TOKEN_CACHE_SECONDS = 14 * 60
+TOKEN_CACHE_MAX_ENTRIES = 10_000
 
 
 class AuthClientReal(AuthClientBase):
@@ -20,15 +26,30 @@ class AuthClientReal(AuthClientBase):
         settings = get_settings()
         self.url = f"{settings.AUTH_SERVER_URL.rstrip('/')}{SESSION_PATH}"
         self.client = httpx.AsyncClient(
-            headers={API_KEY_HEADER: settings.AUTH_WHATSAPP_API_KEY.get_secret_value()},
-            # Awaited before Meta gets its reply (Meta wants a response within ~5s), so keep it short
+            headers={"Authorization": f"Bearer {settings.AUTH_WHATSAPP_API_KEY.get_secret_value()}"},
             timeout=5.0,
         )
+        self._cache: dict[str, tuple[str, float]] = {}  # bsuid -> (token, expiry on the monotonic clock)
 
     async def close(self) -> None:
         await self.client.aclose()
 
     async def get_token(self, bsuid: str) -> str:
+        cached = self._cache.get(bsuid)
+        if cached and cached[1] > time.monotonic():
+            return cached[0]
+        token = await self._exchange(bsuid)
+        self._remember(bsuid, token)
+        return token
+
+    def _remember(self, bsuid: str, token: str) -> None:
+        now = time.monotonic()
+        if len(self._cache) >= TOKEN_CACHE_MAX_ENTRIES:
+            self._cache = {k: v for k, v in self._cache.items() if v[1] > now}
+        if len(self._cache) < TOKEN_CACHE_MAX_ENTRIES:
+            self._cache[bsuid] = (token, now + TOKEN_CACHE_SECONDS)
+
+    async def _exchange(self, bsuid: str) -> str:
         try:
             response = await self.client.post(self.url, json={"bsuid": bsuid})
             response.raise_for_status()

@@ -258,6 +258,16 @@ class WhatsAppConversationManager:
         logger.info("Created a new thread for the whatsapp user")
         return new_thread_id
 
+    async def sign_in_and_handle_text_message(self) -> None:
+        """Background entry point for a text message: sign in, show typing, then answer."""
+        if not await self.authenticate_user():
+            await self.send_whatsapp_message("Sorry, we couldn't sign you in. Please try again later.")
+            return
+
+        # Only handle_text_message cancels the typing loop, so it starts only for a signed-in user
+        await self.send_typing_indicator_then_start_loop()
+        await self.handle_text_message()
+
     async def handle_text_message(self) -> None:
         """Process an incoming text message and send a response to the WhatsApp sender."""
         if not self.bsuid or not self.token:

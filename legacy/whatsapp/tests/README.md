@@ -1,6 +1,6 @@
 # Tests
 
-Run from `apps/whatsapp`:
+Run from `legacy/whatsapp`:
 
 ```powershell
 uv run pytest tests -q

@@ -54,7 +54,7 @@ Affected: all WhatsApp users who currently cannot use Ansari on WhatsApp at all;
 
 Baked Decisions (from issue #321; fixed for this spec, not to be re-opened in the spec, plan or review):
 
-- **Architecture (decision 1):** a separate WhatsApp service in the monorepo (for example `apps/whatsapp`) that calls `apps/api` over HTTP. It starts as the existing Python service, imported as is as much as possible.
+- **Architecture (decision 1):** a separate WhatsApp service in the monorepo (for example `legacy/whatsapp`) that calls `apps/api` over HTTP. It starts as the existing Python service, imported as is as much as possible.
 - **User identity (decision 2):** the WhatsApp service sends the user's BSUID (never the phone number) to a new `/whatsapp` endpoint in `apps/auth`, gets a JWT back, and calls `apps/api` with the message text and that JWT. `apps/api` identifies the user by the GUID in the JWT. This app stores neither the BSUID nor the phone number, only the GUID and the user's settings (in the existing `preferences` table). A new BSUID means a new user, with no identity continuity.
 - **Answer format (decision 4):** use the existing streaming endpoints and aggregate their output into messages split for WhatsApp, as the legacy service does.
 - **Incoming messages (decision 5):** always answer Meta "OK" immediately, with no queue or message log table.
@@ -75,7 +75,8 @@ Other constraints:
 
 - `apps/auth` provides the `/whatsapp` endpoint and handles the fact that a WhatsApp user has no email (owned by Amr).
 - Ansari uses a single Meta business portfolio and is not enrolled in parent BSUIDs, so the regular BSUID suffices (to be confirmed).
-- The `/whatsapp` contract is taken as given: `POST /api/whatsapp/session`, authenticated with a WhatsApp API key (name assumed: `AUTH_WHATSAPP_API_KEY`), request `{ "bsuid": "US.…" }`, response `{ "token": "<JWT>" }` in the format `apps/auth` already issues, errors as `{ message }` (400 malformed BSUID, 401 wrong key, 500).
+- The `/whatsapp` contract follows issue #329: `POST /api/whatsapp/session`, authenticated with `Authorization: Bearer <key>` where the key is an `apps/auth` API key (env name `AUTH_WHATSAPP_API_KEY`), request `{ "bsuid": "US.…" }`, response `{ "token": "<JWT>" }` in the format `apps/auth` already issues, errors as `{ message }` (400 malformed BSUID, 401 one identical body for every key failure, 500).
+- The key is a revocable, permission-scoped client credential, not a shared secret: a leaked key can mint tokens only for WhatsApp users, within a per-key budget. Each WhatsApp user reuses one session, so this service caches the token per BSUID for a little under the token's 15-minute life. `apps/auth` applies per-key limits instead of per-IP ones.
 - The `preferences` table (one row per setting keyed by GUID) is the home for user settings; today that is only preferred language, and expiry stays global.
 - Meta's own throughput limits and webhook retry behaviour sufficiently bound traffic (see Baked Decision 7); this has not been load tested.
 - Message-ID duplicates from Meta are rare enough to ignore (Baked Decision 5).
@@ -102,7 +103,7 @@ Recommended: Approach 1.
 ## Open Questions
 
 **Critical**
-- None. The `/whatsapp` contract in Assumptions is treated as final.
+- None. The `/whatsapp` contract in Assumptions is settled by issue #329.
 
 **Important**
 - Where do the WhatsApp service's secrets and per-environment Meta credentials live in the monorepo's deployment setup?

@@ -214,9 +214,15 @@ def split_by_fixed_chunks(text: str, max_length: int) -> list[str]:
         return [text]
 
     chunks = []
-
-    # Simply take max_length characters at a time
-    for i in range(0, len(text), max_length):
-        chunks.append(text[i : i + max_length])
+    start = 0
+    while len(text) - start > max_length:
+        end = start + max_length
+        # Cut after the last whitespace in the second half of the window so a word, URL or *bold* pair is not split
+        cut = max(text.rfind(" ", start, end), text.rfind("\n", start, end)) + 1
+        if cut > start + max_length // 2:
+            end = cut
+        chunks.append(text[start:end])
+        start = end
+    chunks.append(text[start:])
 
     return chunks

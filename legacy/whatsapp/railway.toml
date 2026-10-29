@@ -10,9 +10,9 @@
 
 [build]
 builder = "dockerfile"
-dockerfilePath = "apps/whatsapp/Dockerfile"
+dockerfilePath = "legacy/whatsapp/Dockerfile"
 watchPatterns = [
-  "apps/whatsapp/**",
+  "legacy/whatsapp/**",
 ]
 
 [deploy]

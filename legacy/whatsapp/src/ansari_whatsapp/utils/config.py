@@ -7,6 +7,9 @@ from pydantic import HttpUrl, SecretStr, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+MOCK_FLAGS = ("MOCK_ANSARI_CLIENT", "MOCK_AUTH_CLIENT", "MOCK_META_API")
+
+
 class WhatsAppSettings(BaseSettings):
     """
     Settings for the WhatsApp service.
@@ -54,7 +57,7 @@ class WhatsAppSettings(BaseSettings):
     META_ACCESS_TOKEN_FROM_SYS_USER: SecretStr
     META_WEBHOOK_VERIFY_TOKEN: SecretStr
     # Used for verifying webhook signatures (X-Hub-Signature-256)
-    META_ANSARI_APP_SECRET: SecretStr = SecretStr("your_app_secret")
+    META_ANSARI_APP_SECRET: SecretStr  # No default: a public default would let anyone forge signed webhooks
     # NOTE: We add a default value here, since we never set this in staging/production/etc. environments
     #   I.e., this token is only used for local development with zrok (check .env.example for more details)
     META_WEBHOOK_ZROK_SHARE_TOKEN: SecretStr = SecretStr("your_token")
@@ -91,7 +94,7 @@ class WhatsAppSettings(BaseSettings):
     WHATSAPP_MESSAGE_AGE_THRESHOLD_SECONDS: int = 86400  # 1 day
 
     # Logging settings
-    LOGGING_LEVEL: str = "DEBUG"
+    LOGGING_LEVEL: str = ""  # Empty means DEBUG when DEPLOYMENT_TYPE=local, otherwise INFO
     LOG_TEST_FILES_ONLY: bool = False
 
     # Service Provider settings
@@ -105,12 +108,21 @@ class WhatsAppSettings(BaseSettings):
     ########### Validators ###########
 
     @model_validator(mode="after")
-    def refuse_shared_mock_token_outside_local(self):
-        """One token for every BSUID would put every WhatsApp user in the same account and thread."""
-        if self.MOCK_AUTH_TOKEN and self.MOCK_AUTH_TOKEN.get_secret_value() and self.DEPLOYMENT_TYPE != "local":
-            raise ValueError(
-                "MOCK_AUTH_TOKEN gives every user the same account; it is only allowed when DEPLOYMENT_TYPE=local"
-            )
+    def refuse_mocks_outside_local(self):
+        """Mocks answer with canned data (and MOCK_AUTH_TOKEN puts every user in one account), so only local may use them."""
+        if self.DEPLOYMENT_TYPE == "local":
+            return self
+        enabled = [name for name in MOCK_FLAGS if getattr(self, name)]
+        if self.MOCK_AUTH_TOKEN and self.MOCK_AUTH_TOKEN.get_secret_value():
+            enabled.append("MOCK_AUTH_TOKEN")
+        if enabled:
+            raise ValueError(f"{', '.join(enabled)} only allowed when DEPLOYMENT_TYPE=local (got {self.DEPLOYMENT_TYPE})")
+        return self
+
+    @model_validator(mode="after")
+    def default_logging_level(self):
+        if not self.LOGGING_LEVEL:
+            self.LOGGING_LEVEL = "DEBUG" if self.DEPLOYMENT_TYPE == "local" else "INFO"
         return self
 
     @field_validator("ORIGINS", mode="before")

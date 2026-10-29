@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from ansari_whatsapp.app.main import app
 from ansari_whatsapp.services.ansari_client_real import AnsariClientReal
 from ansari_whatsapp.services.auth_client_mock import AuthClientMock
-from ansari_whatsapp.services.auth_client_real import API_KEY_HEADER, SESSION_PATH, AuthClientReal
+from ansari_whatsapp.services.auth_client_real import SESSION_PATH, AuthClientReal
 from ansari_whatsapp.services.meta_api_service_mock import MetaApiServiceMock
 from ansari_whatsapp.services.service_provider import reset_ansari_client, reset_auth_client
 from ansari_whatsapp.utils.config import get_settings
@@ -82,7 +82,8 @@ def test_auth_client_exchanges_bsuid_for_token(monkeypatch):
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["url"] = str(request.url)
-        seen["key"] = request.headers.get(API_KEY_HEADER)
+        seen["auth"] = request.headers.get("authorization")
+        seen["legacy_header"] = request.headers.get("x-whatsapp-api-key")
         seen["body"] = json.loads(request.content)
         return httpx.Response(200, json={"token": "jwt-123"})
 
@@ -92,8 +93,44 @@ def test_auth_client_exchanges_bsuid_for_token(monkeypatch):
 
     assert token == "jwt-123"
     assert seen["url"].endswith(SESSION_PATH)
-    assert seen["key"] == "test"
+    assert seen["auth"] == "Bearer test"
+    assert seen["legacy_header"] is None
     assert seen["body"] == {"bsuid": BSUID}
+
+
+def test_auth_client_reuses_a_token_per_bsuid_until_it_is_nearly_expired(monkeypatch):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content)["bsuid"])
+        return httpx.Response(200, json={"token": f"jwt-{len(calls)}"})
+
+    _use_transport(monkeypatch, "ansari_whatsapp.services.auth_client_real", handler)
+    now = [1000.0]
+    monkeypatch.setattr("ansari_whatsapp.services.auth_client_real.time.monotonic", lambda: now[0])
+    auth = AuthClientReal()
+
+    first = asyncio.run(auth.get_token(BSUID))
+    again = asyncio.run(auth.get_token(BSUID))
+    other = asyncio.run(auth.get_token("US.99999999999999999999"))
+    now[0] += 14 * 60 + 1
+    renewed = asyncio.run(auth.get_token(BSUID))
+
+    assert first == again == "jwt-1"
+    assert other == "jwt-2"
+    assert renewed == "jwt-3"
+    assert calls == [BSUID, "US.99999999999999999999", BSUID]
+
+
+def test_auth_client_does_not_cache_a_failure(monkeypatch):
+    answers = [httpx.Response(500, json={"message": "boom"}), httpx.Response(200, json={"token": "jwt-ok"})]
+    _use_transport(monkeypatch, "ansari_whatsapp.services.auth_client_real", lambda r: answers.pop(0))
+    auth = AuthClientReal()
+
+    with pytest.raises(AuthTokenError):
+        asyncio.run(auth.get_token(BSUID))
+
+    assert asyncio.run(auth.get_token(BSUID)) == "jwt-ok"
 
 
 @pytest.mark.parametrize("status", [400, 401, 500])
@@ -150,11 +187,34 @@ def test_shared_mock_token_is_refused_outside_local(monkeypatch, deployment_type
         get_settings.cache_clear()
 
 
+@pytest.mark.parametrize("flag", ["MOCK_ANSARI_CLIENT", "MOCK_AUTH_CLIENT", "MOCK_META_API"])
+@pytest.mark.parametrize(
+    ("deployment_type", "allowed"), [("local", True), ("development", False), ("staging", False), ("production", False)]
+)
+def test_every_mock_switch_is_refused_outside_local(monkeypatch, flag, deployment_type, allowed):
+    from ansari_whatsapp.utils.config import WhatsAppSettings
+
+    monkeypatch.setenv("DEPLOYMENT_TYPE", deployment_type)
+    monkeypatch.setenv(flag, "True")
+    get_settings.cache_clear()
+    try:
+        if allowed:
+            assert getattr(WhatsAppSettings(), flag) is True
+        else:
+            with pytest.raises(ValueError, match=flag):
+                WhatsAppSettings()
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()
+
+
 def test_an_empty_mock_token_is_fine_in_any_environment(monkeypatch):
     from ansari_whatsapp.utils.config import WhatsAppSettings
 
     monkeypatch.setenv("DEPLOYMENT_TYPE", "production")
     monkeypatch.setenv("MOCK_AUTH_TOKEN", "")
+    for flag in ("MOCK_ANSARI_CLIENT", "MOCK_AUTH_CLIENT", "MOCK_META_API"):
+        monkeypatch.setenv(flag, "False")
     get_settings.cache_clear()
     try:
         assert WhatsAppSettings().DEPLOYMENT_TYPE == "production"
@@ -369,7 +429,8 @@ def test_token_exchange_failure_notifies_user_and_is_reported(monkeypatch):
 
     response = _post_signed_webhook(_text_message(from_user_id=BSUID))
 
-    assert response.json()["error_code"] == "USER_AUTHENTICATION_FAILED"
+    # Meta gets its normal reply; the user is told about the failure in the background
+    assert response.status_code == 200
     assert recipients == [BSUID]
     assert any("sign you in" in part for part in sent)
 

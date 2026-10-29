@@ -4,7 +4,7 @@
 
 ## Executive Summary
 
-Follow the spec's recommended Approach 1: import the existing Python WhatsApp service into the monorepo as a separate app (`apps/whatsapp`), then replace its legacy user handling with the `apps/auth` token exchange, then add the one-thread-per-user lifecycle, then finish environment behaviour (maintenance mode, `!d ` filter) and deployment docs. The Baked Decisions in the spec are fixed and not re-opened here. The `/whatsapp` contract is taken as given (`POST /api/whatsapp/session`, `AUTH_WHATSAPP_API_KEY`, `{ bsuid }` in, `{ token }` out).
+Follow the spec's recommended Approach 1: import the existing Python WhatsApp service into the monorepo as a separate app (`legacy/whatsapp`), then replace its legacy user handling with the `apps/auth` token exchange, then add the one-thread-per-user lifecycle, then finish environment behaviour (maintenance mode, `!d ` filter) and deployment docs. The Baked Decisions in the spec are fixed and not re-opened here. The `/whatsapp` contract is taken as given (`POST /api/whatsapp/session`, `AUTH_WHATSAPP_API_KEY`, `{ bsuid }` in, `{ token }` out).
 
 Testing strategy, used by every phase:
 1. **Automated:** pytest with mock Meta, mock `apps/auth` and mock `apps/api` clients (the legacy base/real/mock service pattern). No network, no Meta.
@@ -32,23 +32,23 @@ Testing strategy, used by every phase:
 
 #### Objective
 
-Bring `ansari-whatsapp` into the monorepo as `apps/whatsapp` with minimal changes, so it builds, lints and passes its existing tests there. Behaviour is unchanged at this point.
+Bring `ansari-whatsapp` into the monorepo as `legacy/whatsapp` with minimal changes, so it builds, lints and passes its existing tests there. Behaviour is unchanged at this point.
 
 #### Files to Create / Modify
 
-- `apps/whatsapp/` (source, `pyproject.toml`, `uv.lock`, `pytest.ini`, `Dockerfile`, tests, `.env.example`), copied from the legacy repo without its logs, `tmp/` files, personal scripts, the `zrok.exe` binary and generated artifacts.
+- `legacy/whatsapp/` (source, `pyproject.toml`, `uv.lock`, `pytest.ini`, `Dockerfile`, tests, `.env.example`), copied from the legacy repo without its logs, `tmp/` files, personal scripts, the `zrok.exe` binary and generated artifacts.
 - Monorepo wiring only where needed (workspace and CI entries), following how other apps are registered.
 
 #### Deliverables
 
-- [ ] `apps/whatsapp` present and runnable with `uv` and `ruff`.
+- [ ] `legacy/whatsapp` present and runnable with `uv` and `ruff`.
 - [ ] Legacy tests pass with `MOCK_META_API=True` and `MOCK_ANSARI_CLIENT=True`.
 - [ ] `.env.example` contains no secrets.
 - [ ] Tests for this phase (the imported suite).
 
 #### Acceptance Criteria
 
-- [ ] `uv sync`, `ruff check`, `ruff format --check` and `pytest tests/ -v` pass in `apps/whatsapp`.
+- [ ] `uv sync`, `ruff check`, `ruff format --check` and `pytest tests/ -v` pass in `legacy/whatsapp`.
 - [ ] Existing monorepo build and tests are unaffected.
 
 #### Test Plan
@@ -65,7 +65,7 @@ Identify users by BSUID only. The service gets a JWT from `apps/auth` and calls 
 
 #### Files to Create / Modify
 
-- In `apps/whatsapp`: a new auth client (base, real and mock, like the other services) behind the service provider; the webhook parser and conversation manager updated to key on BSUID and drop phone-number registration and the phone-hidden notice; the Ansari client updated to call `apps/api` with the JWT instead of legacy registration endpoints.
+- In `legacy/whatsapp`: a new auth client (base, real and mock, like the other services) behind the service provider; the webhook parser and conversation manager updated to key on BSUID and drop phone-number registration and the phone-hidden notice; the Ansari client updated to call `apps/api` with the JWT instead of legacy registration endpoints.
 - New settings: auth base URL and `AUTH_WHATSAPP_API_KEY`, validated in config and listed in `.env.example`.
 - Confirm in `apps/api` which existing endpoints the service needs (chat streaming, thread create or read, history) and use them as they are. If a needed endpoint is missing, record it as a finding instead of widening this phase.
 
@@ -97,7 +97,7 @@ Each user has exactly one thread. If the last activity is older than the global 
 
 #### Files to Create / Modify
 
-- In `apps/whatsapp`: the conversation manager's thread logic and the Ansari client's thread calls; expiry setting in config (global, default 3 hours).
+- In `legacy/whatsapp`: the conversation manager's thread logic and the Ansari client's thread calls; expiry setting in config (global, default 3 hours).
 - `apps/api` only if the existing endpoints cannot read the thread's last activity or delete a thread with its messages; any such change is kept minimal and noted in the review.
 
 #### Deliverables
@@ -125,7 +125,7 @@ Finish environment behaviour and make the service testable and deployable by oth
 
 #### Files to Create / Modify
 
-- In `apps/whatsapp`: rename the maintenance flag `WHATSAPP_UNDER_MAINTENANCE` to `WA_MAINTENANCE_MODE` (owner decision): it is read from this service's own environment and is independent of `apps/api`'s `MAINTENANCE_MODE`; keep the notice message; keep the staging `!d ` filter; `README.md` and `tests/README.md` for the app (both still reference legacy files that were not imported).
+- In `legacy/whatsapp`: rename the maintenance flag `WHATSAPP_UNDER_MAINTENANCE` to `WA_MAINTENANCE_MODE` (owner decision): it is read from this service's own environment and is independent of `apps/api`'s `MAINTENANCE_MODE`; keep the notice message; keep the staging `!d ` filter; `README.md` and `tests/README.md` for the app (both still reference legacy files that were not imported).
 - Deployment notes: per-environment Meta credentials and secrets, and the deploy steps for staging and production, following the monorepo's existing deployment docs.
 - Findings from the Phase 2 review to resolve here: (a) apps/api reports a failed or empty answer as an inline `Error: ...` at the end of a 200 stream, which the client currently relays to the user unlogged, so detect it, log it and send a failure notice; (b) deploy blocker to confirm before the staging smoke test: the service now requires `from_user_id` in every webhook, and sending to a BSUID (`recipient`) is untested against Meta's live API (Meta's docs disagree on when it is supported), so check the webhook Graph API version and test a real send; (c) `README.md` still documents the six deleted legacy endpoints.
 - Findings from the Phase 3 review to resolve here: failures of the thread list, create and delete calls are logged but not captured in Sentry, unlike message-processing failures, so add that with the logging work. (The review's single-replica note no longer applies: the per-user lock was removed by owner decision.)
@@ -138,7 +138,7 @@ Finish environment behaviour and make the service testable and deployable by oth
 - [x] Maintenance flag `WA_MAINTENANCE_MODE`, with tests.
 - [x] `!d ` filter kept, with tests (ignored in staging, processed otherwise).
 - [x] README covering setup, tests, and local testing with zrok.
-- [x] Staging smoke-test checklist (in `apps/whatsapp/README.md`).
+- [x] Staging smoke-test checklist (in `legacy/whatsapp/README.md`).
 
 #### Phase 4 outcome (what changed from the notes above)
 
@@ -147,7 +147,7 @@ Finish environment behaviour and make the service testable and deployable by oth
 - Thread-list, create, delete, message-processing and sign-in failures are captured in Sentry. A backend timeout is captured as a message-processing failure (the real client wraps timeouts into `MessageProcessingError`); there is no separate timeout case.
 - `/sentry-debug` is kept but registered only outside production; `clean_logs.sh` is removed (logs go to stdout).
 - The app reads `PORT` (default 8001).
-- Dockerfile: uv 0.9.13, `uv sync --frozen`, and paths relative to the repo root (the build context RELEASE.md prescribes). `apps/whatsapp/railway.toml` records the Railway settings; Railway does not read it.
+- Dockerfile: uv 0.9.13, `uv sync --frozen`, and paths relative to the repo root (the build context RELEASE.md prescribes). `legacy/whatsapp/railway.toml` records the Railway settings; Railway does not read it.
 
 #### Real-service run (owner requirement: Phase 4 is not complete on mocks alone)
 
@@ -163,7 +163,7 @@ No Meta test number could be claimed (see the PR notes below), so the run used M
 
 - **Webhooks from Meta, through zrok:** the Test app's callback URL (`https://zrok0ansari0test.share.zrok.io/whatsapp/v2`) passed Meta's verification handshake; Meta's dashboard sample webhooks (v26.0) reached the service with a valid signature. They were ignored because Meta's samples carry a fake phone number ID; equivalent signed payloads (username with phone hidden, and with phone present) were then sent through the public URL with the sample ID set locally, and each was identified by BSUID, got a thread in the real `apps/api` and an answer. Meta's "not opted in" sample was not replayed.
 - **Send to a BSUID:** one text was sent from the production number to the developer's own BSUID (`recipient`, no `to`) with a direct HTTP call using the same endpoint, token and body shape as `MetaApiServiceReal`. Meta answered 200 with the BSUID echoed as `user_id`, and delivery and read status webhooks followed. The developer confirming it appeared on the phone is still to be recorded. The service class itself was not used for this send.
-- **How the BSUID was obtained:** a temporary log line for `from_user_id` was added to the legacy service for about an hour and is now commented out; the value lives only in the git-ignored `apps/whatsapp/.env` as `REAL_TEST_BSUID`.
+- **How the BSUID was obtained:** a temporary log line for `from_user_id` was added to the legacy service for about an hour and is now commented out; the value lives only in the git-ignored `legacy/whatsapp/.env` as `REAL_TEST_BSUID`.
 - **Fixes found on the way:** the verification handler logged the verify token in local mode (removed, with a test); the app ID in the legacy `.env` belonged to a different Meta app than the app secret (a local config error, not a code change).
 - **Not covered:** a real phone's message arriving at the new service (the Test app has no number), and the Docker image.
 
@@ -176,7 +176,7 @@ No Meta test number could be claimed (see the PR notes below), so the run used M
 
 #### Phase 4 review (Claude, iteration 1): COMMENT
 
-All findings were checked against the code. Fixed: the README and `tests/README.md` no longer claim nothing ran against live Meta or `apps/api` (they now say what was and was not done); the unreachable `httpx.TimeoutException` branch and its import were removed; a missing new thread id is now captured in Sentry like the other creation failures; Sentry captures for thread-list, delete, create and message-processing failures each have a test (each fails if its capture call is removed); the JSON-log decision became `should_use_json_logs()` with parametrized cases (the old test passed without its CI clause); `apps/whatsapp/.python-version` pins 3.13, the version the Docker image uses, and the suite passes on it; the dead `META_WABA_ID` block and the legacy `ngrok` host were removed from `.env.example`.
+All findings were checked against the code. Fixed: the README and `tests/README.md` no longer claim nothing ran against live Meta or `apps/api` (they now say what was and was not done); the unreachable `httpx.TimeoutException` branch and its import were removed; a missing new thread id is now captured in Sentry like the other creation failures; Sentry captures for thread-list, delete, create and message-processing failures each have a test (each fails if its capture call is removed); the JSON-log decision became `should_use_json_logs()` with parametrized cases (the old test passed without its CI clause); `legacy/whatsapp/.python-version` pins 3.13, the version the Docker image uses, and the suite passes on it; the dead `META_WABA_ID` block and the legacy `ngrok` host were removed from `.env.example`.
 
 Decided, no change: the maintenance check runs before the `!d ` filter, so a staging instance in maintenance mode answers a developer's `!d ` message with the maintenance notice. This matches the legacy order and is harmless, so it stays.
 
@@ -228,6 +228,6 @@ Unit tests for both behaviours. Manual: local run through zrok with `!d `, then 
 
 ## Documentation Updates
 
-- New `apps/whatsapp/README.md`.
+- New `legacy/whatsapp/README.md`.
 - Deployment and environment notes for the WhatsApp service in the monorepo docs.
 - `codev/resources` arch notes only if the review finds a lasting system-shape fact.

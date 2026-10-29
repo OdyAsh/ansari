@@ -11,6 +11,7 @@ https://stackoverflow.com/questions/72894209/whatsapp-cloud-api-sending-old-mess
 https://www.perplexity.ai/search/explain-fastapi-s-backgroundta-rnpU7D19QpSxp2ZOBzNUyg
 """
 
+import hmac
 import uuid
 
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks, Depends
@@ -177,7 +178,8 @@ async def verification_webhook(request: Request) -> HTMLResponse:
     logger.debug(f"Verification webhook received: {mode=}, {challenge=}, token_present={bool(verify_token)}")
 
     if mode and verify_token:
-        if mode == "subscribe" and verify_token == get_settings().META_WEBHOOK_VERIFY_TOKEN.get_secret_value():
+        expected_token = get_settings().META_WEBHOOK_VERIFY_TOKEN.get_secret_value()
+        if mode == "subscribe" and hmac.compare_digest(verify_token.encode("utf-8"), expected_token.encode("utf-8")):
             logger.info("WHATSAPP WEBHOOK VERIFIED SUCCESSFULLY!")
             # Note: Challenge must be wrapped in an HTMLResponse for Meta to accept and verify the callback
             return HTMLResponse(challenge)
@@ -207,10 +209,10 @@ async def main_webhook(
        - Checks if service is under maintenance
        - Handles staging/local development routing (temporary workaround)
        - Validates message age (rejects messages older than configured threshold)
-       - Authenticates the user through apps/auth
        - Filters unsupported message types (non-text messages)
 
     4. **Background Processing**:
+       - Signs the user in through apps/auth (a failure is reported to the user as a message)
        - Starts typing indicator loop (shows user that bot is processing)
        - Processes text messages asynchronously via background tasks
 
@@ -220,7 +222,6 @@ async def main_webhook(
     - Maintenance mode: Sends maintenance message and returns 200
     - Staging filter: Returns 200 if message prefixed with "!d" in staging
     - Old message: Ignored (nothing is sent to the user)
-    - Authentication failure: Returns 500 error response
     - Unsupported media: Sends unsupported message and returns 200
 
     **Meta Webhook Compliance:**
@@ -247,11 +248,9 @@ async def main_webhook(
           are available for each environment.
     """
     # Step 1: Signature verification now handled by Depends(verify_meta_signature_dependency)
-    # Step 2: Parse the JSON payload
-    data = await request.json()
-
-    # Step 3: Extract message details from the webhook payload
+    # Step 2 and 3: Parse the JSON payload and extract message details from it
     try:
+        data = await request.json()
         (
             is_status,
             is_target_business_number,
@@ -369,18 +368,7 @@ async def main_webhook(
             success=False, message="Message too old, ignored", status_code=422, error_code="MESSAGE_TOO_OLD"
         )
 
-    # Exchange the sender's BSUID for a JWT with apps/auth
-    if not await conversation_manager.authenticate_user():
-        # Token exchange failed
-        background_tasks.add_task(
-            conversation_manager.send_whatsapp_message,
-            "Sorry, we couldn't sign you in. Please try again later.",
-        )
-        return create_response_for_meta(
-            success=False, message="User authentication failed", status_code=500, error_code="USER_AUTHENTICATION_FAILED"
-        )
-
-    # Check if the incoming message is a media type other than text
+    # Check if the incoming message is a media type other than text (needs no sign-in)
     if incoming_msg_type != "text":
         background_tasks.add_task(
             conversation_manager.handle_unsupported_message,
@@ -389,15 +377,10 @@ async def main_webhook(
             success=False, message="Unsupported message type handled", status_code=415, error_code="UNSUPPORTED_MESSAGE_TYPE"
         )
 
-    # Start the typing indicator loop that will continue until message is processed. It is only started now,
-    # for text messages the user is signed in for, because only handle_text_message cancels it.
+    # Sign-in (apps/auth), typing indicator and answer all run after Meta has its reply: a slow apps/auth
+    # must not make Meta redeliver the message, as nothing dedupes redeliveries.
     background_tasks.add_task(
-        conversation_manager.send_typing_indicator_then_start_loop,
-    )
-
-    # Process text messages sent by the WhatsApp user
-    background_tasks.add_task(
-        conversation_manager.handle_text_message,
+        conversation_manager.sign_in_and_handle_text_message,
     )
 
     return create_response_for_meta(success=True, message="Message processed successfully")
