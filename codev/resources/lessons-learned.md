@@ -220,3 +220,15 @@ See `codev/reviews/300-better-auth-migration.md` for the full context.
 - **An inference about infrastructure is not a finding.** A Cloudflare egress-IP claim was recorded as a finding from reasoning alone, then had to be withdrawn when a measurement contradicted it. Label it provisional, probe both paths (via the CDN and direct, IPv4 and IPv6), and derive tests from the measured fixture rather than pinning provisional values, which break when the real measurements arrive.
 - **Expo / React Native traps (frontend, 10b/10c):** expo-router re-syncs URL params (`?token=`) back from navigation state; React Native defines `window` without `location`/`history`, so a web-only change to the app entry can red-box iOS (launch the native app after any app-entry change); react-native-web trims email inputs itself; a rejection escaping `act` drops state updates.
 - **Next App Router treats `_folder` as private.** A route at `/_diag` lives under `%5Fdiag/`.
+
+## WhatsApp service port (spec 321)
+
+See `codev/reviews/321-rfc-whatsapp-support-in-the-mo.md` for the full context.
+
+- **Never log a webhook verify token, a phone number, a BSUID or message text, and prove it with a test.** A local-only debug branch printed the verify token. The guard is a test that sets a distinctive token, calls the handshake with a right and a wrong value, and asserts neither appears in the captured log; it was shown to fail when the line was put back.
+- **A manual run against real services finds configuration errors mocks cannot.** The legacy `.env` mixed three Meta apps (a token for one, an app ID for another, a subscription on a third), and a 15-minute JWT expired mid-session. Check which app a token belongs to (`debug_token`) and which app an ID and secret pair belongs to before debugging code.
+- **A test of a flag needs a case for each part of the condition.** The JSON-log decision was tested only with the value it already had, so deleting its CI clause kept the test green. Extract the decision into a function and parametrize it.
+- **Do not claim a code path exists that cannot run.** A timeout branch and a note saying timeouts were reported separately were both wrong, because the client wrapped timeouts before the branch could see them. Read what the callee actually raises.
+- **Keep a spec's success criteria next to a test or an owner.** The "answers over 4000 characters are split" criterion had neither, and was only noticed while writing the review.
+- **Meta test numbers can fail to provision for weeks.** "An error occurred while creating the test account" is widely reported; a business with one live number may be unable to claim one. Ask for a spare number early rather than discovering this at the real-Meta test.
+- **Windows, native:** `afx spawn` assumes `/bin/bash`, porch's whole-monorepo test check cannot pass, and `consult` detects a builder worktree by a forward-slash path. Each needed a local workaround; the full list is for an upstream Codev report.
