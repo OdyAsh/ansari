@@ -4,7 +4,7 @@
 
 Declared 2026-10-28, before the runs below, at the architect's direction, so that no load level is chosen after seeing results.
 
-- **Arms.** CAPPED = the root script as shipped (`turbo run test -- --maxWorkers=4`). UNCAPPED = `turbo run test --`, the pre-fix script, run as `pnpm exec turbo run test --`. Both arms use `TURBO_FORCE=true`, so nothing comes from the cache, and both load `apps/api/.env.ci` and `apps/auth/.env.ci`.
+- **Arms.** CAPPED = the root script as shipped at the time (`turbo run test -- --maxWorkers=4`; after the PR #323 merge it is `turbo run test --filter=!ansari-mcp -- --maxWorkers=4`). UNCAPPED = `turbo run test --`, the pre-fix script, run as `pnpm exec turbo run test --`. Both arms use `TURBO_FORCE=true`, so nothing comes from the cache, and both load `apps/api/.env.ci` and `apps/auth/.env.ci`.
 - **Order.** The arms alternate (CAPPED, UNCAPPED, CAPPED, …) to cancel machine drift. Each scenario gets at least 5 pairs.
 - **Gate.** Each run starts only when no vitest process from any worktree is alive. The sampler records any foreign vitest that appears mid-run (`foreign_vitest` max), and every overlapped run is reported, not dropped.
 - **Scenario 1, concurrent vitest (the failure actually observed).** Two root runs start together in this worktree, with no busy loops. In each arm both copies are capped or both are uncapped. A pair-run is red if either copy exits non-zero.
@@ -17,7 +17,7 @@ Declared 2026-10-28, before the runs below, at the architect's direction, so tha
 
 The root `pnpm test` runs four vitest suites at once under turbo (`apps/api`, `apps/auth`, `apps/frontend`, `packages/auth`). Each suite defaults to `availableParallelism() - 1` workers in run mode: 13 on the 14-core development machine (read from vitest 4.1.11 `resolveMaxWorkers`, and the same in vitest 3.2.7). That came to about 50 forks before anything else on the machine, and the pglite setup hooks crossed the 30 s deadline whenever the machine was also busy.
 
-**Fix:** the root script now caps each suite's pool. `"test": "turbo run test -- --maxWorkers=4"`. The four vitest configs and CI are untouched. A pin test (`apps/api/tests/root-test-script.test.ts`) asserts the flag. The root `package.json` is added to `ansari-api#test`'s turbo inputs so that removing the flag busts the cache. No per-test or per-hook deadline was changed.
+**Fix:** the root script now caps each suite's pool. `"test": "turbo run test --filter=!ansari-mcp -- --maxWorkers=4"`. The `--filter=!ansari-mcp` came from PR #323, merged in at d0b573d3; see "Develop merge" below. The A/B and the proofs before that section ran `turbo run test -- --maxWorkers=4`, which passes the same flag to the same four vitest suites. The four vitest configs and CI are untouched. A pin test (`apps/api/tests/root-test-script.test.ts`) asserts the flag. The root `package.json` is added to `ansari-api#test`'s turbo inputs so that removing the flag busts the cache. No per-test or per-hook deadline was changed.
 
 ### Why the root script and not the configs (architect decision, option b)
 
@@ -120,7 +120,7 @@ Under the cap at 28 loops (`cap4-load-1..3`, 30 s deadlines on develop), `apps/a
 
 - **codex: REQUEST_CHANGES.**
   - (1) `test:coverage` lacked the root `package.json` input, and CI runs the pin through it. **Fixed** with a `test:coverage` block in `apps/api/turbo.json`. Overriding `inputs` replaces the inherited list, so `$TURBO_DEFAULT$` and `.env.ci` are repeated. Dry-run proof: with the block, removing the flag moves `ansari-api#test:coverage`'s hash (f0ac13d3 → 0ff54eeb); without it, the hash stays at ccded238. `outputs` remain `coverage/**`.
-  - (2) The regex accepted `--maxWorkers=999` or a duplicate overriding flag. **Fixed**: the pin asserts the exact script. `=64` now fails with `expected 'turbo run test -- --maxWorkers=64' to be 'turbo run test -- --maxWorkers=4'`.
+  - (2) The regex accepted `--maxWorkers=999` or a duplicate overriding flag. **Fixed**: the pin asserts the exact script. `=64` now failed with `expected 'turbo run test -- --maxWorkers=64' to be 'turbo run test -- --maxWorkers=4'` (pre-merge output). After the PR #323 merge, the pin asserts `turbo run test --filter=!ansari-mcp -- --maxWorkers=4`.
   - (3) "BUGFIX should not add `codev/reviews/*`." **Declined**: the architect asked for this review and its evidence.
 - **claude: APPROVE.** Its regex note is covered by codex (2). It rated the `test:coverage` gap as separate; it is fixed here anyway, since the edit is three lines in a file already in scope. It also noted that `4` is absolute, so on a machine with 4 or fewer cores the root run allows up to 4 workers per suite, where the default would be 3 or fewer. That is accepted: the measurement was taken on the 14-core development machine, the root run is a development-machine command, and CI never runs it.
 - **gemini:** the lane was skipped because the `agy` CLI exited with code 3 (a tooling failure, not a verdict).
