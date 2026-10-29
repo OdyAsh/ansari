@@ -15,3 +15,11 @@ All items accepted.
 - P11: an apps/api resolve-user test pins the system-only refusal; recorded in arch.md.
 - P12: one green command per phase (root turbo test, typecheck and lint, cold at least once); a runnable demo harness for the phase-4 CLI.
 - Nits: session updatedAt named; ipAddress and userAgent written as ''; runbook avoids a bare apply line; users.ts header fix in phase 6; two better-call copies noted in the risks.
+
+---
+
+# Plan 329, iteration 2 (phase 8): response, 2026-10-30
+
+Reviews on d3b92b00: codex REQUEST_CHANGES (5 points); gemini COMMENT (skipped, agy exit 3). In parallel: the security architect's own review and external round (T1-T20, `329-plan-iter2-input-security-T1-T20.md`).
+
+**All five codex points are N/A: the plan they reviewed was withdrawn.** All five concerned owner amendment 1 (the phone-number plugin and claiming by number): Sentry injection for the stub sender, a claimable holder already linked, phone-number normalisation, race assertions, and wiring for the mailer and the phone alert. Before any of it was built, the owner replaced amendment 1 with amendment 2: "drop phone number entirely, whatsapp id is enough". Phase 8 is now "Remove the phone number" (spec §5). There is no plugin, no claim, no number to normalise and no notice. The points were accepted on their merits while amendment 1 stood, and drafted, but those drafts were discarded with it. The security architect's T12 carries into the new phase 8; T1-T11 and T13-T20 are moot. The record is in the review, under "Owner amendment 1: withdrawn".

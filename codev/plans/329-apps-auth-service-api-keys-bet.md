@@ -17,7 +17,7 @@ The order follows three rules:
 2. **No commit publishes a surface it does not also guard.** The plugin is wired in the same commit that blocks its routes. The exchange route lands with its CORS placement, key check and timeouts in one commit.
 3. **Library before service.** The identity and session core lives in `packages/auth` and is tested on pglite, then the apps/auth route wraps it.
 
-Eight phases, each one commit in a single PR (phase 8 added by the owner amendment of 2026-10-30, spec §5). Deploy order (amended 2026-10-28, owner decision): the PR merges to `develop` (staging) once `0001` is applied and verified on staging; at the production cutover, the full auth journal as it stands then (`0000`, `0001` and any later migration) is applied in order before the promoted code deploys, owned by `docs/cutover/better-auth-cutover.md`.
+Eight phases, each one commit in a single PR. Phase 8 implements spec §5, owner amendment 2 of 2026-10-30 ("drop phone number entirely, whatsapp id is enough"). That amendment withdraws amendment 1, the phone-number plugin and claiming by number, which was planned here and reviewed but never built. Deploy order (amended 2026-10-28, owner decision): the PR merges to `develop` (staging) once `0001` is applied and verified on staging; at the production cutover, the full auth journal as it stands then (`0000`, `0001` and any later migration) is applied in order before the promoted code deploys, owned by `docs/cutover/better-auth-cutover.md`.
 
 **The green command for every phase** is the root `pnpm test && pnpm typecheck && pnpm lint` (Turborepo, all packages), from a cold cache at least once per phase (`--force`), because shared-package changes in `packages/auth` reach apps/auth and apps/api.
 
@@ -33,7 +33,7 @@ Eight phases, each one commit in a single PR (phase 8 added by the owner amendme
     {"id": "phase_5", "title": "WhatsApp identity and session core"},
     {"id": "phase_6", "title": "The exchange route, boot assertion and alerts"},
     {"id": "phase_7", "title": "End-to-end contract test, source scan and documentation"},
-    {"id": "phase_8", "title": "Phone-number plugin, verified numbers, claim, supersede and unlink (owner amendment)"}
+    {"id": "phase_8", "title": "Remove the phone number (owner amendment 2)"}
   ]
 }
 ```
@@ -432,81 +432,75 @@ Prove an exchange token works in apps/api unchanged, prove apps/api has no Whats
 
 The contract test through the existing harness; scan negative tests; doc consistency tests.
 
-### Phase 8: Phone-number plugin, verified numbers, claim, supersede and unlink (owner amendment)
+### Phase 8: Remove the phone number (owner amendment 2)
 
-**Dependencies**: Phase 7 (the shipped exchange, its tests and docs, all of which this phase changes in place)
+**Dependencies**: Phase 7 (the shipped exchange, tests and docs, which this phase changes in place)
 
 #### Objective
 
-Implement spec §5, the owner amendment of 2026-10-30. Migration `0001` takes the phone-number plugin's columns in place. `phoneNumber()` is enabled with its routes open, behind one refusal body and per-number budgets. Every stored number is verified. The exchange claims, supersedes or refuses when a number is already held. The runbook gains unlink. Nothing is applied anywhere yet, so `0001` changes in place rather than gaining a `0002`.
+Implement spec §5, owner amendment 2: no phone number is stored anywhere. The exchange accepts `phone_number` and ignores it, so the merged #327 keeps working. Migration `0001` loses `auth.users.phone_number`, in place. Identity, eligibility and the delegation rule are unchanged, because they were always BSUID-only.
+
+#### Step 1: confirm `0001` is applied nowhere (T12)
+
+Before editing `0001`, read staging's auth database: `select to_regclass('auth.apikey')` and whether `auth.users` has a `phone_number` column, through the operator, read-only.
+- Absent everywhere (expected, since the owner says `0001` has not run): `0001` changes in place.
+- Present anywhere: stop. `0001` stays as it is, and a new `0002` drops the column. That decision is named here so it is not made under deploy pressure.
+
+The result goes in the review.
 
 #### Files to Create / Modify
 
 **Schema and migration**
-- `packages/auth/src/schema.ts`: on `users`, `phoneNumber: text('phone_number').unique()` and `phoneNumberVerified: boolean('phone_number_verified').default(false).notNull()`. The PR's own `phone_number` comment block is replaced.
-- `packages/auth/drizzle/0001_api_key_phone.sql` and its snapshot, regenerated with `drizzle-kit generate --name api_key_phone` after removing the old `0001` from the journal. The tag and `idx` stay the same, the SQL is reviewed again, and `AUTH_DEPLOYED_THROUGH` stays `null`.
-- `packages/auth/tests/schema/auth-schema.test.ts`: the two columns, `UNIQUE` on `phone_number`, and the `NOT NULL DEFAULT false`.
-- `packages/auth/tests/schema/better-auth-model.test.ts` (new): `getAuthTables(createAuth(…).options)`, the model better-auth's own generator reads, against the journal-built database. Every model and field better-auth expects exists, with a compatible type, nullability and uniqueness. This is the owner's "compatible with better-auth" check, and it fails on any future drift.
-- `apps/auth/src/boot.ts`: `assertSchema` also requires `users_phone_number_unique` (exact table and column), since claim and supersede depend on it.
+- `packages/auth/src/schema.ts`: remove `phoneNumber` from `users`.
+- `packages/auth/drizzle/0001_*`: regenerated in place with `drizzle-kit generate --name api_key`, after removing the old `0001` and its snapshot from the journal. The tag becomes `0001_api_key`, since the old name would mislead. The SQL is reviewed again; `AUTH_DEPLOYED_THROUGH` stays `null`. Every reference to the old tag is updated in the same commit: the journal tests, the copy and auth-journal tests, the cutover, runbook and self-hosting docs, and the README.
+- `packages/auth/tests/schema/auth-schema.test.ts` and `tests/migration/auth-journal-parity.test.ts`: `auth.users` has no `phone_number`.
+- `packages/auth/tests/schema/better-auth-model.test.ts` (new, the owner's compatibility ask): `getAuthTables(createAuth(…).options)` against the journal-built database. Every model and field better-auth expects exists, with a compatible type and nullability. One deviation is allowed and commented: `apikey.reference_id` is `uuid` with a foreign key, where the model says string. Negative control: a column dropped from the test database turns it red.
 
-**The plugin**
-- `packages/auth/src/index.ts`: drop the `phone_number` additional field. Add `phoneNumber({ sendOTP: phoneOtpUnavailable, … })`, with `signUpOnVerification` unset. `user.create.before` refuses a `phoneNumber` value on every Better Auth path, beside the reserved-domain refusal.
-- `packages/auth/src/phone.ts` (new):
-  - the normalisation the exchange and the budgets share;
-  - `phoneKeyHash` (sha256, used in rate-limit keys, never the number itself);
-  - the stub sender `phoneOtpUnavailable`: one Sentry count, then throws `PhoneOtpUnavailableError`, with a comment naming the WhatsApp service as the intended sender.
-- `packages/auth/src/sign-up-guard.ts` (or wherever `signUpGuard` lives): refuse a body carrying `phoneNumber` / `phone_number`, with the same answer as other refused fields.
-- `apps/auth/src/limits/phone-limiter.ts` (new), modelled on `email-limiter.ts`'s body handling:
-  - for the five plugin paths, read the number from the body and spend `PHONE_ROUTE_PER_NUMBER` (in `limits.ts`) through `consumeWindow`, keyed `phone:<hash>|<path>`;
-  - map `PhoneOtpUnavailableError` and every other refusal on those paths to **one** 4xx body (status and bytes fixed in one constant);
-  - `ROUTER_RULES` stay all `false`.
-- `packages/auth/src/limits.ts`: `PHONE_ROUTE_PER_NUMBER` (judgement-sized like the rest, documented in the runbook).
+**Better Auth config**
+- `packages/auth/src/index.ts`: remove the `phone_number` additional field.
+- `packages/auth/tests/config/api-key.test.ts` and `options.test.ts`: the probe 4a pins of `phone_number` (refused at sign-up; absent from sign-in and get-session) are removed. A test that sign-up with a `phone_number` field writes no such value replaces them, since better-auth's own unknown-field handling then applies.
 
-**The exchange** (`packages/auth/src/whatsapp.ts`)
-- `resolveOrCreateWhatsappUser` returns `{userId, kind}` with `kind` one of `existing | created | linked | superseded`, or throws a typed `HolderRefusedError`. With no row for the BSUID and a provided number:
-  - **held by a claimable user** (`role = 'user'`, no `service` row, at least one `credential` or social row) → insert the `whatsapp` row on it;
-  - **held by a WhatsApp-only user** → in one transaction: clear its two columns, delete its sessions, create the new user holding the number (verified);
-  - **held by an admin, another role, or a `service` holder** → refused, nothing written.
+**The exchange**
+- `packages/auth/src/whatsapp.ts`: `resolveOrCreateWhatsappUser` and `issueWhatsappToken` take no phone. The create path writes none, and the phone update under the lock is removed. The source-level placement assertion loses "the phone update".
+- `apps/auth/src/routes/whatsapp.ts`: `exchangeBody` reads `bsuid` only. `phone_number` is accepted in any shape (no bound, no 400) and never read further. `EXCHANGE_BODY_LIMIT` keeps room for it: the field may still arrive, in any shape, until #327 stops sending it.
+- `packages/auth/src/limits.ts`, `reserved.ts` and `apps/auth/src/alerts.ts`: comments that name the phone number are kept where it stays a needle, such as "never logged", and the rest removed.
 
-  A unique violation on `phone_number` is retried once through the same rules. The holder is read and changed under `FOR NO KEY UPDATE` on its row.
-- `issueWhatsappToken`: eligibility per §5.4. New reasons are `role` (any non-`user`), `service`, `accounts` (a second `whatsapp` row, or a different BSUID) and `phone-conflict` (the presented number is held by another user). The address and `registered_via` checks apply only to users with no non-WhatsApp sign-in row. The phone update writes `verified = true`.
-- The link notice: after the commit, for `linked` with a real (non-noreply) email, `sendWhatsappLinkedNotice(mailer, email)`. It is best-effort: a failure is counted by an alert, and the token is still returned.
+**Tests**
+- `packages/auth/tests/whatsapp.test.ts` and `apps/auth/tests/whatsapp-session.test.ts`:
+  - the phone storage, update and "untouched when absent" tests are removed;
+  - the body tests turn the `phone_number` 400 cases into **200 accepted-and-ignored** cases (a number, a string, `null`, empty, 33 characters, non-digits);
+  - a new test sends a distinctive number, then scans every column of every table in the `auth` schema (`information_schema.columns`, cast to text) and finds it in no row;
+  - the needles stay: the never-log capture, the Sentry scrub test, and the raw-response-bytes assertion all still include the number.
+- `apps/auth/tests/whatsapp-session-sentry.test.ts`: the number stays a needle.
+- `apps/api/tests/contract/whatsapp-exchange.test.ts`: the exchange still sends a number. The app-database dump still finds no number, and the auth side's all-tables scan joins it.
+- A source-level check: no file in `packages/auth/src` or `apps/auth/src` reads `phone_number`, beyond the route's documented "accepted and ignored" line. Its negative test: a planted read is caught.
 
-**apps/auth**
-- `apps/auth/src/routes/whatsapp.ts` and `app.ts`: the mailer reaches the route through `ServiceDeps`. The new outcomes go to alerts.
-- `apps/auth/src/alerts.ts`: alert kinds `whatsapp-linked` and `number-superseded` (counts only), plus `holder-refused`. `ExchangeAlert` grows, and the runbook doc test counts kinds from the union.
+**Probes**
+- `packages/auth/scripts/probes/library-probes.ts` and `exchange-lock-probe.ts`: the 4a phone probe and the phone parts of F1–F4 are removed. Their earlier outputs stay in the review as the record.
+- `packages/auth/scripts/probes/phone-plugin-probe.ts`: not committed as code. Its output and the security architect's T1–T20 go in the review as the record of why amendment 1 was withdrawn.
 
 **Docs**
-- `docs/cutover/service-keys-runbook.md`: the phone routes and their one refusal body; the budgets; the new alert kinds; the claim/supersede rules in operator terms; and **Unlink**. Unlink is three statements in one `BEGIN … COMMIT` (delete the `whatsapp` row, clear both columns, delete the sessions), with the find-by-log-line step first. Three statements, so no script subcommand, per security's rule.
-- `docs/self-hosting.md`, `codev/resources/arch.md` (the widened delegation rule and §5.5's residual, verbatim), `packages/auth/README.md` (the columns).
-- Spec 321 / #327: the consumer contract is unchanged (it still sends `phone_number`). A note to the #327 builder through the architect: a number can now be superseded or claimed.
+- `docs/cutover/service-keys-runbook.md`, `docs/self-hosting.md`, `codev/resources/arch.md` and `packages/auth/README.md`: the phone column and its storage rules are removed. The contract reads "`phone_number` accepted and ignored", and the never-log lists keep the number.
+- The new tag `0001_api_key` everywhere the old one was named.
+- Coordination: none from this builder. The security architect asks #327's author, through the community architect, to stop sending the field, and a later PR removes it from the contract.
 
 #### Deliverables
 
-- [ ] `0001` regenerated in place and reviewed; the schema tests and the `getAuthTables` model test.
-- [ ] The plugin enabled, with the stub sender, the one refusal body and the per-number budgets.
-- [ ] Verification by construction, with sign-up refusals in the hook and the guard, and `signUpOnVerification` off, each pinned.
-- [ ] The claim, supersede, refuse and conflict paths, the link notice, the new alerts and the unlink runbook.
+- [ ] Step 1 recorded (staging read), and `0001` regenerated in place as `0001_api_key` with no `phone_number`.
+- [ ] The better-auth model test, with its one documented deviation and a negative control.
+- [ ] The exchange accepts and ignores `phone_number`; the all-tables scan, the needles and the source check.
+- [ ] Phone tests, probes and docs removed or updated; the old tag renamed everywhere.
 
-#### Acceptance Criteria (spec §5.6, each with a test)
+#### Acceptance Criteria (spec §5)
 
-- [ ] Each of the five routes answers byte-identically for a known and an unknown number, and its budget binds; the rate-limit key holds no number.
-- [ ] No write path leaves `phone_number` set with `phone_number_verified = false` (a pinning test over sign-up, the hook, the exchange's create, update, claim and supersede, and the plugin's verify).
-- [ ] Claim (credential holder; social-only holder), supersede, refuse (admin; other role; `service`), conflict and the concurrent-violation retry, each asserting rows, sessions, the token's `sub`, alerts and the notice.
-- [ ] The amended eligibility matrix (spec §5.6).
-- [ ] The number is in the user's own `get-session` and sign-in responses, and absent from `/api/account/me`, apps/api, logs, Sentry events, alerts and rate-limit keys.
-- [ ] Real Postgres (the probes, extended): two concurrent first exchanges for different BSUIDs carrying one number leave one holder. A supersede racing a claim on the same holder serializes under the lock.
-- [ ] The boot check refuses without `users_phone_number_unique`.
-- [ ] All suites green; the runbook and self-hosting doc tests extended; no new environment variable.
+- [ ] `0001` creates no `phone_number`; the schema, journal-parity and model tests agree.
+- [ ] Every shape of `phone_number` → 200, and afterwards the all-tables scan finds it in no row; no response, log line or Sentry event carries it.
+- [ ] The source check reports no read of `phone_number` beyond the route's accept line; its planted negative goes red.
+- [ ] All suites green, typecheck and lint clean; no new environment variable; the doc tests updated for the new tag.
 
 #### Test Plan
 
-pglite for every path and the matrix, with the claim and supersede seams forcing the concurrent violation. Real Postgres for the lock and race (probe 4, new steps under deadlines). Capture tests for logs and Sentry. HTTP tests for the five plugin routes (known versus unknown number, byte comparison). Mutation checks on each new guard, as in earlier phases.
-
-#### Risks
-
-- **The plugin's internals:** the routes' bodies for known versus unknown numbers before the perimeter normalises them, and whether `verify` writes through `user.update` (which the create hook must not block). Probe both first, before writing the perimeter.
-- **Regenerating `0001`:** drizzle-kit must produce the same tag. The snapshot and journal are checked by `auth-journal-parity.test.ts`.
+pglite for the exchange and the all-tables scan; the model test against the journal-built database, with a dropped-column negative control; the existing capture and Sentry tests with the number kept as a needle; apps/api's contract test end to end; doc tests for the renamed tag. Mutation checks: storing the number again turns the scan red, and a 400 on an odd `phone_number` turns the accept tests red.
 
 ## Criterion → owning phase → test
 
@@ -562,12 +556,10 @@ Each spec success criterion has exactly one acceptance owner. An earlier probe m
 | Staging smoke | 7 (coordination) | comment on PR #327 by its builder |
 | Documentation | 7 | `self-hosting-docs.test.ts`, `cutover-docs.test.ts`, review |
 | `ROUTER_RULES` unchanged; no new env var | 6, 7 | `public-face.test.ts`; four-way derivation in the review |
-| §5: plugin columns in `0001`; `getAuthTables` model match | 8 | `auth-schema.test.ts`, `better-auth-model.test.ts` |
-| §5: five phone routes, one body, per-number budgets | 8 | `apps/auth/tests/phone-routes.test.ts` |
-| §5: verified by construction; sign-up refuses `phoneNumber`; `signUpOnVerification` off | 8 | `packages/auth/tests/phone.test.ts` |
-| §5: claim, supersede, refuse, conflict, retry, notice, alerts | 8 | `packages/auth/tests/whatsapp.test.ts`, `apps/auth/tests/whatsapp-session.test.ts`, probe 4 |
-| §5: amended eligibility matrix and exposure | 8 | `whatsapp.test.ts`, `whatsapp-session.test.ts`, capture tests |
-| §5: unlink | 8 | runbook doc test plus a pglite test that runs its SQL block |
+| Amendment 2: no `phone_number` column in `0001`; schema matches better-auth's model | 8 | `auth-schema.test.ts`, `auth-journal-parity.test.ts`, `better-auth-model.test.ts` |
+| Amendment 2: `phone_number` accepted and ignored; in no row, response, log or Sentry event | 8 | `whatsapp-session.test.ts` (body cases, all-tables scan), capture and Sentry tests, `whatsapp-exchange.test.ts` |
+| Amendment 2: no code reads `phone_number` | 8 | source-level check with a planted negative |
+| Amendment 2: `0001` applied nowhere (T12) | 8 | staging read recorded in the review |
 
 ## Risks and Mitigation
 

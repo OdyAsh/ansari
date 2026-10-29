@@ -423,6 +423,43 @@ This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under 
 
 Probe outputs, per-phase notes and the pre-existing Sentry reproduction, recorded as each phase ran.
 
+### Owner amendment 1 (phone-number plugin, claiming by number): withdrawn, the record
+
+On 2026-10-30 the owner folded better-auth's phone-number plugin and claiming an account by phone number into this project (spec amendment 1, commits 1d84f91d and ca1452db; plan phase 8, d3b92b00). Porch rolled back from review to plan. Codex's plan consult (iteration 2) and the security architect's own review and external round (Codex and Claude, both REQUEST CHANGES) then found that the plan could not be built safely as asked. The security architect's 20 findings are in `codev/projects/329-*/329-plan-iter2-input-security-T1-T20.md`, the external texts in `329-plan-iter2-input-s5-{codex,claude}.md`.
+
+The blocking one, T1, was confirmed by probe before anything was built. With the plugin enabled and a placeholder sender that throws:
+- `send-otp` stores a live code before the sender fails;
+- `verify` with that code creates a session;
+- phone sign-in never calls the sender;
+- reset-by-phone stores a code without the sender, and with it creates a password on an account that had none.
+
+A before hook on the five paths closes all of them. The owner then withdrew the amendment: "we don't need to deal with this complexity for now, change of plans, drop phone number entirely, whatsapp id is enough". That became amendment 2 (spec §5): no phone number stored at all, `phone_number` accepted and ignored. Of the 20 findings only T12 carries into it (verify that `0001` is applied nowhere, with `0002` as the fallback).
+
+Probe output (`packages/auth/scripts/probes/phone-plugin-probe.ts`, better-auth 1.7.7, in-memory adapter, run 2026-10-30; the session token in `verify`'s body is redacted; the script itself is not committed, since amendment 2 has no plugin):
+
+```
+== A: plugin enabled, no short-circuit
+send-otp (known): 500  | writes: user.create.before,sendOTP called | rows before {"user":1,"session":0,"account":1,"verification":0} after {"user":1,"session":0,"account":1,"verification":1}
+  a verification row for the number exists after the sender threw: true
+verify (known, the stored code): 200 {"status":true,"token":"<redacted>","u | set-cookie: true | sessions 0 -> 1 | hooks: user.update.before
+sign-in/phone-number (known, right password): 200 | set-cookie: true | sendOTP called: false
+sign-in/phone-number (unknown): 401 {"message":"Invalid phone number or password","code":"INVALID_PHONE_NUMBER_OR_PASSWORD"}
+sign-in/phone-number (known, wrong password): 401 {"message":"Invalid phone number or password","code":"INVALID_PHONE_NUMBER_OR_PASSWORD"}
+request-password-reset known: 200 {"status":true} | unknown: 200 {"status":true} | verification rows 0 -> 2 | sendOTP called: false
+send-otp unknown: 500  | known was: 500 
+== A2: reset-password on a user with no credential row
+reset-password with the stored code: 200 {"status":true} | accounts whatsapp -> whatsapp,credential
+== B: a before hook that throws on the five paths
+/phone-number/send-otp: known 400 {"message":"Invalid request"} | unknown 400 {"message":"Invalid request"} | set-cookie false
+/phone-number/verify: known 400 {"message":"Invalid request"} | unknown 400 {"message":"Invalid request"} | set-cookie false
+/sign-in/phone-number: known 400 {"message":"Invalid request"} | unknown 400 {"message":"Invalid request"} | set-cookie false
+/phone-number/request-password-reset: known 400 {"message":"Invalid request"} | unknown 400 {"message":"Invalid request"} | set-cookie false
+/phone-number/reset-password: known 400 {"message":"Invalid request"} | unknown 400 {"message":"Invalid request"} | set-cookie false
+rows before {"user":1,"session":0,"account":1,"verification":1} after {"user":1,"session":0,"account":1,"verification":1} | sendOTP called: false | hooks: user.create.before
+== C: plugin endpoints
+signInPhoneNumber:/sign-in/phone-number sendPhoneNumberOTP:/phone-number/send-otp consumePhoneNumberOTP:(no path) verifyPhoneNumber:/phone-number/verify requestPasswordResetPhoneNumber:/phone-number/request-password-reset resetPasswordPhoneNumber:/phone-number/reset-password
+```
+
 ### Main's item B: `copy.sh --dry-run` against an empty auth database (real Postgres 18), 2026-10-28
 
 Two throwaway `postgres:18` containers on loopback: the app database migrated through apps/api's `0010` with two seeded legacy users, and an empty auth database. `copy.sh --dry-run --allow-local` was run under a pseudo-terminal (it refuses a redirected stdout). The notice comes from inside the rolled-back transaction. `0001_api_key_phone` is reported applied only when every object its SQL creates exists, and that includes `auth.apikey` and `auth.users.phone_number` (the generated check names `to_regclass('"auth"."apikey"')` and `column_name = 'phone_number'`). After the run, the auth database has no `auth` schema and no tables.
