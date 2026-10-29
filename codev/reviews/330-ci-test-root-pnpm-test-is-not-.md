@@ -125,6 +125,16 @@ Under the cap at 28 loops (`cap4-load-1..3`, 30 s deadlines on develop), `apps/a
 - **claude: APPROVE.** Its regex note is covered by codex (2). It rated the `test:coverage` gap as separate; it is fixed here anyway, since the edit is three lines in a file already in scope. It also noted that `4` is absolute, so on a machine with 4 or fewer cores the root run allows up to 4 workers per suite, where the default would be 3 or fewer. That is accepted: the measurement was taken on the 14-core development machine, the root run is a development-machine command, and CI never runs it.
 - **gemini:** the lane was skipped because the `agy` CLI exited with code 3 (a tooling failure, not a verdict).
 
+## Develop merge (PR #323, 2026-10-30)
+
+PR #323 changed the root script to `turbo run test --filter=!ansari-mcp --`. `ansari-mcp` runs `tsx --test`, node's test runner, which would reject `--maxWorkers`, so the filter stays. Develop was merged in (d0b573d3, no rebase). The script is now `turbo run test --filter=!ansari-mcp -- --maxWorkers=4`, and the pin asserts that exact string. A dry run shows `--maxWorkers=4` reaching `@ansari/auth`, `ansari-api`, `ansari-auth` and `ansari-frontend#test`, with `ansari-mcp` excluded. The warm-cache proof was re-run:
+
+| Step | Cache | Result |
+|---|---|---|
+| flag present | miss, then hit | green, green |
+| flag removed | **miss** | **red** at `root-test-script.test.ts:24` |
+| flag restored | hit | green |
+
 ## Lessons
 
 - A harness ratio is a proxy. The failure in this issue was concurrent vitest runs, and 28 busy loops reproduced it in only 5 of 11 uncapped runs (0 of 3 on a calm machine). Reproduce the real scenario before trusting a proxy's negative.
