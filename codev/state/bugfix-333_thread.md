@@ -21,3 +21,9 @@
 - Gemini lane skipped (agy exit 3). Commit prefix kept as `[Bugfix 333]` per the architect's brief (codex asked for `[Bugfix #333]`/`Fix #333:`).
 - Not done: `beforeSendTransaction` in apps/auth (no tracing there; would diverge from #331's options).
 - Lesson: in @sentry/core 10.x, ANY `dataCollection` value opts in to collect-all defaults for omitted keys. Never set it partially.
+
+## PR #334 review iteration 2 (2026-10-28)
+- Codex REQUEST_CHANGES on commit prefix only (no code/test issues). Kept `[Bugfix 333]` per the architect's brief; flagged for the architect.
+- Claude COMMENT: apps/api kept the query string; `/v2/mcp-complete?q=` is the user's question (verified, route.ts:274). Fixed: scrub drops `query_string` and the URL's query; query fixture added (control leaks it; M7/M8 mutants red).
+- Residuals Claude raised, left for a follow-up issue: apps/api breadcrumbs still on (outbound search URLs carry user terms); apps/auth keeps the URL path (better-auth `reset-password/:token`); `sentry.client.config.ts` has no scrub.
+- Sentry v11 (latest 11.10.0; we run 10.69.0) removes `sendDefaultPii` and defaults `dataCollection` to collect-all (cookies, headers, bodies, DB query data) per its MIGRATION.md. The scrubs hold either way; settings pins in both apps make an upgrade fail loudly.

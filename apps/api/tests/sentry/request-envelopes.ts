@@ -7,7 +7,7 @@
 // Next reports every unhandled route error through `onRequestError`, which
 // apps/api wires to Sentry.captureRequestError (src/instrumentation.ts); it
 // attaches every request header. Events and transactions raised in a request
-// scope carry the request data the scope holds, body included.
+// scope carry the request data the scope holds, body and query included.
 import * as Sentry from "@sentry/nextjs";
 
 import { onRequestError } from "@/instrumentation";
@@ -16,6 +16,7 @@ export const FIXTURES = {
   bearer: "USERJWTMARKER",
   cookie: "COOKIEVALUEMARKER",
   body: "USERMESSAGEMARKER",
+  query: "USERQUESTIONMARKER",
 };
 
 const HEADERS = {
@@ -57,12 +58,13 @@ export async function captureRequestEnvelopes() {
     scope.setSDKProcessingMetadata({
       normalizedRequest: {
         method: "POST",
-        url: "https://api.example.test/api/v2/threads",
+        url: `https://api.example.test/api/v2/mcp-complete?q=${FIXTURES.query}`,
+        query_string: `q=${FIXTURES.query}`,
         headers: HEADERS,
         data: JSON.stringify({ message: FIXTURES.body }),
       },
     });
-    Sentry.startSpan({ name: "POST /api/v2/threads", forceTransaction: true }, () => {
+    Sentry.startSpan({ name: "POST /api/v2/mcp-complete", forceTransaction: true }, () => {
       Sentry.captureException(new Error("probe: raised inside a request"));
     });
   });

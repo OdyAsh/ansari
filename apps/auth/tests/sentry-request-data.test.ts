@@ -101,3 +101,17 @@ it('negative control: without the scrub, the same alert events carry the body, h
   }
   expect(leaked.sort()).toEqual(Object.keys(FIXTURES).sort());
 }, 120_000);
+
+it("leaves Sentry's data collection at its private defaults", async () => {
+  Sentry.init({ dsn: 'https://public@o0.ingest.sentry.io/0', environment: 'test', ...SERVICE_SENTRY_OPTIONS });
+  try {
+    expect(Sentry.getClient()?.getDataCollectionOptions()).toMatchObject({
+      userInfo: false,
+      httpBodies: [],
+      genAI: { inputs: false, outputs: false },
+      databaseQueryData: false,
+    });
+  } finally {
+    await Sentry.close();
+  }
+});

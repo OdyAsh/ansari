@@ -9,7 +9,7 @@ import { captureRequestEnvelopes, FIXTURES, initSentry } from "./request-envelop
 beforeAll(() => initSentry({}));
 afterAll(() => Sentry.close());
 
-it("without the scrub, the same envelopes carry the bearer, cookie and body", async () => {
+it("without the scrub, the same envelopes carry the bearer, cookie, body and query", async () => {
   const { leaked } = await captureRequestEnvelopes();
   expect(leaked.sort()).toEqual(Object.keys(FIXTURES).sort());
 });

@@ -13,7 +13,7 @@ import { captureRequestEnvelopes, initSentry } from "./request-envelopes";
 beforeAll(() => initSentry(SENTRY_REQUEST_PRIVACY));
 afterAll(() => Sentry.close());
 
-it("an event raised inside a request with a bearer carries no Authorization header, cookie or body", async () => {
+it("an event raised inside a request with a bearer carries no Authorization header, cookie, body or query", async () => {
   const { items, leaked } = await captureRequestEnvelopes();
   expect(items.map(([header]) => header.type).sort()).toEqual(["event", "event", "transaction"]);
   for (const [, event] of items) {

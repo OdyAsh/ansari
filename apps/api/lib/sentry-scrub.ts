@@ -17,8 +17,9 @@ function dropCredentialAttributes(data: Record<string, unknown> | undefined): vo
 /**
  * Sentry's request-data integration attaches the in-flight request to every
  * event raised while it is handled. Strip what can carry user content or a
- * credential: the body (user messages), the Authorization header (the user's
- * JWT) and cookies, from the request and from span attributes (issue #333).
+ * credential: the body (user messages), the query string (`/v2/mcp-complete?q=`
+ * is the user's question), the Authorization header (the user's JWT) and
+ * cookies, from the request and from span attributes (issue #333).
  * Node lowercases incoming header names, but a header object built elsewhere
  * may not, so names are matched case-blind.
  */
@@ -27,6 +28,8 @@ export function scrubRequestEvent<E extends Event>(event: E): E {
   if (request) {
     delete request.data;
     delete request.cookies;
+    delete request.query_string;
+    if (request.url) request.url = request.url.split("?")[0];
     if (request.headers) {
       for (const name of Object.keys(request.headers)) {
         if (CREDENTIAL_HEADERS.has(name.toLowerCase())) delete request.headers[name];
