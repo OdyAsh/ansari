@@ -49,7 +49,7 @@ async function createKey(userId: string, body: KeyBody = {}) {
   return auth.api.createApiKey({
     body: {
       userId,
-      prefix: 'wa_',
+      prefix: 'ansari_wa_',
       name: 'test',
       permissions: WHATSAPP,
       rateLimitEnabled: false,
@@ -96,8 +96,8 @@ describe('probe 1: a key created in process', () => {
       refillAmount: 3000,
       refillInterval: 86_400_000,
     });
-    expect(created.key.startsWith('wa_')).toBe(true);
-    expect(created.key).toMatch(/^wa_[A-Za-z]{64}$/);
+    expect(created.key.startsWith('ansari_wa_')).toBe(true);
+    expect(created.key).toMatch(/^ansari_wa_[A-Za-z]{64}$/);
 
     const result = await verify(created.key);
     expect(result.valid).toBe(true);
@@ -163,7 +163,7 @@ describe('probe 1b: limits changed on a live key', () => {
 
 describe('the plugin behaviours the exchange relies on', () => {
   it('an unknown key is valid:false', async () => {
-    const result = await verify(`wa_${'x'.repeat(64)}`);
+    const result = await verify(`ansari_wa_${'x'.repeat(64)}`);
     expect(result.valid).toBe(false);
   });
 

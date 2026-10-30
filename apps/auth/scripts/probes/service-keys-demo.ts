@@ -75,7 +75,7 @@ async function main(): Promise<void> {
   const text = transcript.join('\n');
   const { username, password, pathname, protocol } = new URL(databaseUrl);
   const leaks = [databaseUrl, `${username}:${password}@`, `${pathname}`, `${protocol}//`].filter((s) => text.includes(s));
-  const keys = text.match(/wa_[A-Za-z]{64}/g) ?? [];
+  const keys = text.match(/ansari_wa_[A-Za-z]{64}/g) ?? [];
   console.log(`\nCHECK database printed as hostname:port only: ${leaks.length === 0 ? 'PASS' : `FAIL (${leaks.join(', ')})`}`);
   console.log(`CHECK two keys created, each printed once: ${keys.length === 2 && new Set(keys).size === 2 ? 'PASS' : `FAIL (${keys.length})`}`);
   process.exit(leaks.length === 0 && keys.length === 2 ? 0 : 1);

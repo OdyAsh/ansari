@@ -252,9 +252,16 @@ per prefix, with exactly these patterns (the `.source` of `SECRET_SCANNING_PATTE
 
 | Service | Pattern |
 |---|---|
-| `whatsapp` | `wa_[A-Za-z]{64}` |
-| `ansari-mcp` | `amcp_[A-Za-z]{64}` |
+| `whatsapp` | `ansari_wa_[A-Za-z]{64}` |
+| `ansari-mcp` | `ansari_mcp_[A-Za-z]{64}` |
 
 When one fires: **revoke the key at once** (`list`, then `revoke`), rotate so the consumer keeps
 working, check the alerts and the key's last request for use you cannot explain, and record it in
 the key log. Then remove the key from the repository's history; revoking first matters more.
+
+**The prefix change of 2026-10-30.** Keys were first issued as `wa_` followed by 64 letters, and
+are now `ansari_wa_` (and `ansari_mcp_`). A `wa_` key still verifies, because a key is checked by
+the hash of the whole key, so nothing breaks; but replace it: `rotate whatsapp` (prints an
+`ansari_wa_` key once), switch the consumer's variable to it, then `revoke` the old key. Keep the
+old organisation pattern (`wa_` followed by 64 letters) registered beside the new ones until the
+last `wa_` key is revoked, then remove it.

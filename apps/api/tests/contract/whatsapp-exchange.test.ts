@@ -46,7 +46,7 @@ beforeAll(async () => {
   ({ key } = await service.auth.api.createApiKey({
     body: {
       userId: serviceUser.id,
-      prefix: 'wa_',
+      prefix: 'ansari_wa_',
       name: 'contract',
       permissions: { whatsapp: ['mint'] },
       rateLimitEnabled: false,

@@ -107,7 +107,7 @@ describe('createAuth uses the redacted logger', () => {
       `service-${userId.slice(0, 8)}@noreply.askansari.ai`,
     ]);
     const created = await auth.api.createApiKey({
-      body: { userId, prefix: 'wa_', permissions: { whatsapp: ['mint'] }, rateLimitEnabled: false },
+      body: { userId, prefix: 'ansari_wa_', permissions: { whatsapp: ['mint'] }, rateLimitEnabled: false },
     });
     await client.query('DROP TABLE auth.apikey');
 

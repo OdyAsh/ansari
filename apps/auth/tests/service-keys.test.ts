@@ -34,7 +34,7 @@ const DB_URL_DISTINCT = 'postgres://opsname-zq:pw-zq-9@db.example:6543/authdb-zq
 
 const INITIAL = limits.WHATSAPP_KEY_INITIAL;
 const LIMIT_FLAGS = ['--rate-max', '60', '--rate-window', '60', '--daily', '3000'];
-const WA_KEY = /wa_[A-Za-z]{64}/g;
+const WA_KEY = /ansari_wa_[A-Za-z]{64}/g;
 
 let service: Service;
 
@@ -355,12 +355,12 @@ describe('confirm binding and labels (security PR gate, pass 1)', () => {
     expect(text).toContain(`revoke whatsapp --key ${old.id} --confirm ${old.id}`);
   });
 
-  const KEY = `wa_${'Q'.repeat(64)}`;
+  const KEY = `ansari_wa_${'Q'.repeat(64)}`;
   it.each([
     ['a full key', KEY],
     ['a key without its prefix', 'Q'.repeat(64)],
     ['a truncated key', KEY.slice(0, 40)],
-    ["another service's prefix", 'amcp_partner'],
+    ["another service's prefix", 'ansari_mcp_partner'],
     ['a newline', 'wa main\ninjected line'],
     ['a carriage return', 'wa main\rx'],
     ['a tab', 'wa\tmain'],
@@ -511,7 +511,7 @@ describe('create-key', () => {
     expect(text).not.toContain(row!.key as string);
     expect(row).toMatchObject({
       reference_id: userId,
-      prefix: 'wa_',
+      prefix: 'ansari_wa_',
       start: null,
       enabled: true,
       rate_limit_enabled: true,
@@ -565,7 +565,7 @@ describe('list', () => {
       expect(text).not.toContain(key.slice(3, 20));
       expect(text).not.toContain((await keyRow(id))!.key as string);
     }
-    for (const field of ['name          wa-a', 'name          wa-b', 'prefix        wa_', 'permissions   {"whatsapp":["mint"]}', 'enabled       true', 'limits        60 per 60 s; budget 3000 per 24 h', 'created       20', 'last request  20', 'last request  never']) {
+    for (const field of ['name          wa-a', 'name          wa-b', 'prefix        ansari_wa_', 'permissions   {"whatsapp":["mint"]}', 'enabled       true', 'limits        60 per 60 s; budget 3000 per 24 h', 'created       20', 'last request  20', 'last request  never']) {
       expect(text).toContain(field);
     }
     expect(text.match(WA_KEY)).toBeNull();
@@ -672,6 +672,13 @@ describe('update-limits', () => {
 });
 
 describe('SECRET_SCANNING_PATTERNS', () => {
+  it('every service prefix is ansari_<service>_, unique, and not the start of another', () => {
+    const prefixes = Object.values(serviceUsers.SERVICES).map((s) => s.prefix as string);
+    for (const prefix of prefixes) expect(prefix).toMatch(/^ansari_[a-z]+_$/);
+    expect(new Set(prefixes).size).toBe(prefixes.length);
+    for (const a of prefixes) for (const b of prefixes) if (a !== b) expect(b.startsWith(a), `${a} starts ${b}`).toBe(false);
+  });
+
   it('has one pattern per service, on its prefix', () => {
     expect(Object.keys(serviceUsers.SECRET_SCANNING_PATTERNS).sort()).toEqual(Object.keys(serviceUsers.SERVICES).sort());
     for (const [name, pattern] of Object.entries(serviceUsers.SECRET_SCANNING_PATTERNS)) {
@@ -698,7 +705,7 @@ describe('SECRET_SCANNING_PATTERNS', () => {
       [amcp, wa, false],
       [whatsapp, sessionToken, false],
       [amcp, sessionToken, false],
-      [whatsapp, `wa_${sessionToken}`, false],
+      [whatsapp, `ansari_wa_${sessionToken}`, false],
     ];
     const hits = cases.map(([pattern, candidate, expected]) => {
       expect(pattern.test(candidate), `${pattern.source} vs ${candidate.slice(0, 8)}…`).toBe(expected);
@@ -739,12 +746,12 @@ describe('the durable record', () => {
     const first = await run(['create-key', 'whatsapp', ...LIMIT_FLAGS, '--name', 'wa-1', '--confirm', userId], {
       recorder: sentryRecorder,
     });
-    const key1 = first.lines.find((l) => l.startsWith('wa_'))!;
+    const key1 = first.lines.find((l) => l.startsWith('ansari_wa_'))!;
     const id1 = /Created key ([0-9a-f-]{36})/.exec(first.text)![1]!;
     const rotated = await run(['rotate', 'whatsapp', ...LIMIT_FLAGS, '--name', 'wa-2', '--confirm', userId], {
       recorder: sentryRecorder,
     });
-    const key2 = rotated.lines.find((l) => l.startsWith('wa_'))!;
+    const key2 = rotated.lines.find((l) => l.startsWith('ansari_wa_'))!;
     const id2 = /Created key ([0-9a-f-]{36})/.exec(rotated.text)![1]!;
     await run(['update-limits', 'whatsapp', '--key', id2, ...LIMIT_FLAGS, '--confirm', id2], { recorder: sentryRecorder });
     await run(['revoke', 'whatsapp', '--key', id1, '--confirm', id1], { recorder: sentryRecorder });
@@ -807,7 +814,7 @@ describe('the durable record', () => {
     expect(text).toMatch(new RegExp(`action create-key, service whatsapp, user ${userId}, key ${id}`));
     // The write stands, and the key was still shown once (it is not stored anywhere else).
     expect(await keyRow(id)).toMatchObject({ enabled: true });
-    const key = lines.find((l) => l.startsWith('wa_'))!;
+    const key = lines.find((l) => l.startsWith('ansari_wa_'))!;
     expect(occurrences(text, key)).toBe(1);
     expect((await verify(key)).valid).toBe(true);
   });

@@ -48,7 +48,7 @@ describe('Sentry events from the exchange', () => {
   it("carry no ineligible user's id (the log line names it; no console breadcrumb rides on the alert)", async () => {
     const owner = await serviceUsers.createServiceUser(service.db, 'whatsapp');
     const { key } = await service.auth.api.createApiKey({
-      body: { userId: owner.id, prefix: 'wa_', permissions: { whatsapp: ['mint'] }, rateLimitEnabled: false },
+      body: { userId: owner.id, prefix: 'ansari_wa_', permissions: { whatsapp: ['mint'] }, rateLimitEnabled: false },
     });
     const bsuid = 'US.27182818284590452353';
     const first = await post(key, { bsuid });
@@ -75,7 +75,7 @@ describe('Sentry events from the exchange', () => {
     // service-user alert while the request (with its body) is in flight.
     const owner = await serviceUsers.createServiceUser(service.db, 'whatsapp');
     const { key } = await service.auth.api.createApiKey({
-      body: { userId: owner.id, prefix: 'wa_', permissions: { whatsapp: ['mint'] }, rateLimitEnabled: false },
+      body: { userId: owner.id, prefix: 'ansari_wa_', permissions: { whatsapp: ['mint'] }, rateLimitEnabled: false },
     });
     await service.client.query('delete from auth.account where user_id = $1', [owner.id]);
 

@@ -26,8 +26,8 @@ export const SERVICE_REGISTERED_VIA = 'service';
  * its own.
  */
 export const SERVICES = {
-  whatsapp: { permissions: { whatsapp: ['mint'] }, prefix: 'wa_', bounds: WHATSAPP_KEY_BOUNDS },
-  'ansari-mcp': { permissions: { mcp: ['complete'] }, prefix: 'amcp_', bounds: WHATSAPP_KEY_BOUNDS },
+  whatsapp: { permissions: { whatsapp: ['mint'] }, prefix: 'ansari_wa_', bounds: WHATSAPP_KEY_BOUNDS },
+  'ansari-mcp': { permissions: { mcp: ['complete'] }, prefix: 'ansari_mcp_', bounds: WHATSAPP_KEY_BOUNDS },
 } as const;
 
 export type ServiceName = keyof typeof SERVICES;
@@ -42,8 +42,8 @@ export function isServiceName(name: string): name is ServiceName {
  * these (`.source`) for the organisation.
  */
 export const SECRET_SCANNING_PATTERNS: Readonly<Record<ServiceName, RegExp>> = {
-  whatsapp: /wa_[A-Za-z]{64}/,
-  'ansari-mcp': /amcp_[A-Za-z]{64}/,
+  whatsapp: /ansari_wa_[A-Za-z]{64}/,
+  'ansari-mcp': /ansari_mcp_[A-Za-z]{64}/,
 };
 
 export type ServiceUser = { id: string; email: string; createdAt: Date };
