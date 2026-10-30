@@ -459,6 +459,22 @@ This is a monorepo-wide matter (pglite cold starts against 30 s deadlines under 
 
 Probe outputs, per-phase notes and the pre-existing Sentry reproduction, recorded as each phase ran.
 
+### Merge precondition: `0001_api_key` applied to staging, 2026-10-30
+
+The owner applied `packages/auth/drizzle/0001_api_key.sql` to the staging auth database through the staging Tailscale forwarder, with `psql -X -v ON_ERROR_STOP=1 --single-transaction`, and pasted the output:
+
+```
+CREATE TABLE
+ALTER TABLE
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+ALTER TABLE
+t|t
+```
+
+`t|t` is the runbook's bound verification query: `auth.apikey` exists, and `account_provider_id_account_id_unique` is a unique constraint on `auth.account` over `(provider_id, account_id)`, in order. The duplicate check's own output was not pasted. Its question is answered by the apply itself: adding that constraint inside the single transaction would have failed, and rolled everything back, on any duplicate pair. The precondition for merging PR #331 is met. Production gets the whole auth journal at its cutover (`docs/cutover/better-auth-cutover.md`).
+
 ### Phase 8: remove the phone number (owner amendment 2) (notes)
 
 - **Source.** `schema.ts` drops `users.phoneNumber` and `createAuth` drops the `phone_number` additional field. In `whatsapp.ts`, `resolveOrCreateWhatsappUser` and `issueWhatsappToken` take no phone, and the update under the lock is gone. The route reads `bsuid` only: a `phone_number` in any shape is accepted and never read. `EXCHANGE_BODY_LIMIT` is unchanged, with room for the field until #327 stops sending it.
