@@ -252,8 +252,8 @@ per prefix, with exactly these patterns (the `.source` of `SECRET_SCANNING_PATTE
 
 | Service | Pattern |
 |---|---|
-| `whatsapp` | `wa_[A-Za-z]{64}` |
-| `ansari-mcp` | `amcp_[A-Za-z]{64}` |
+| `whatsapp` | `ansari_wa_[A-Za-z]{64}` |
+| `ansari-mcp` | `ansari_mcp_[A-Za-z]{64}` |
 
 When one fires: **revoke the key at once** (`list`, then `revoke`), rotate so the consumer keeps
 working, check the alerts and the key's last request for use you cannot explain, and record it in

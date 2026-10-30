@@ -81,9 +81,9 @@ const db = createDb();
 const auth = createServiceAuth(db);
 const owner = await serviceUsers.createServiceUser(db, 'whatsapp');
 const { key } = await auth.api.createApiKey({
-  body: { userId: owner.id, prefix: 'wa_', permissions: { whatsapp: ['mint'] }, rateLimitEnabled: false },
+  body: { userId: owner.id, prefix: 'ansari_wa_', permissions: { whatsapp: ['mint'] }, rateLimitEnabled: false },
 });
-const unknown = `wa_${'Z'.repeat(64)}`;
+const unknown = `ansari_wa_${'Z'.repeat(64)}`;
 const bsuid = `US.${Date.now()}`;
 
 const bootOk = await assertSchema(db);

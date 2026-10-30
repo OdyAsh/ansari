@@ -92,7 +92,7 @@ type KeyBody = Record<string, unknown>;
 /** A key created in process, as the service-keys script does, owned by `userId`. */
 async function createKey(body: KeyBody = {}, on: Service = service, userId = serviceUserId) {
   const created = await on.auth.api.createApiKey({
-    body: { userId, prefix: 'wa_', name: 'test', permissions: WHATSAPP, rateLimitEnabled: false, ...body },
+    body: { userId, prefix: 'ansari_wa_', name: 'test', permissions: WHATSAPP, rateLimitEnabled: false, ...body },
   });
   remember(keyHash(created.key));
   return remember(created.key);
@@ -194,7 +194,7 @@ describe('key refusals: one byte-identical 401, no rows', () => {
     ['an empty bearer', async () => ({ authorization: 'Bearer ' })],
     ['a session token', async () => ({ bearer: remember((await signUpTokens(service, 'wa-session@example.com')).sessionToken) })],
     ['a JWT', async () => ({ bearer: (await signUpTokens(service, 'wa-jwt@example.com')).jwt })],
-    ['an unknown key', async () => ({ bearer: remember(`wa_${'A'.repeat(64)}`) })],
+    ['an unknown key', async () => ({ bearer: remember(`ansari_wa_${'A'.repeat(64)}`) })],
     ['a disabled key', async () => ({ bearer: await seededKey('update auth.apikey set enabled = false where key = $1') })],
     ['an expired key', async () => ({ bearer: await seededKey(`update auth.apikey set expires_at = now() - interval '1 minute' where key = $1`) })],
     [
@@ -545,7 +545,7 @@ describe('failures that are not 401', () => {
     try {
       const owner = await serviceUsers.createServiceUser(outage.db, 'whatsapp');
       const raw = await createKey({}, outage, owner.id);
-      const unknown = `wa_${'B'.repeat(64)}`;
+      const unknown = `ansari_wa_${'B'.repeat(64)}`;
       // An unknown key while the relation is there: 401, and the check is cached.
       expect((await exchange(newBsuid(), undefined, { bearer: unknown, on: outage })).status).toBe(401);
       await outage.client.exec('drop table auth.apikey');
@@ -659,7 +659,7 @@ describe('alerts', () => {
     const id = (await service.auth.api.createApiKey({
       body: {
         userId: serviceUserId,
-        prefix: 'wa_',
+        prefix: 'ansari_wa_',
         name: 'volume',
         permissions: WHATSAPP,
         rateLimitEnabled: true,
@@ -688,7 +688,7 @@ describe('alerts', () => {
     const created = await service.auth.api.createApiKey({
       body: {
         userId: serviceUserId,
-        prefix: 'wa_',
+        prefix: 'ansari_wa_',
         name: 'daily',
         permissions: WHATSAPP,
         rateLimitEnabled: false,

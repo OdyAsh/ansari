@@ -58,7 +58,7 @@ async function createKey(print: (line: string) => void) {
     print,
   });
   expect(result.exitCode).toBe(0);
-  const key = result.lines.find((l) => /^wa_[A-Za-z]{64}$/.test(l));
+  const key = result.lines.find((l) => /^ansari_wa_[A-Za-z]{64}$/.test(l));
   if (!key) throw new Error('no key in the output');
   return key;
 }
