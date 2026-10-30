@@ -315,16 +315,23 @@ describe('no phone number anywhere (spec 329 §5, owner amendment 2)', () => {
     const signUp = await call(auth, '/sign-up/email', {
       body: { name: 'Probe', email, password, phone_number: number, phoneNumber: number },
     });
-    if (signUp.status !== 200) await auth.api.signUpEmail({ body: { name: 'Probe', email, password } });
+    // better-auth 1.7.7 drops body fields that no schema field declares and signs up as
+    // usual (observed 2026-10-30: 200). Pinned, so a later version that stores or refuses
+    // them is noticed here.
+    expect(signUp.status).toBe(200);
 
     const { rows: tables } = await client.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables WHERE table_schema = 'auth'`
     );
     expect(tables.length).toBeGreaterThan(0);
+    const dumps: string[] = [];
     for (const { table_name } of tables) {
       const { rows } = await client.query<{ row: unknown }>(`SELECT row_to_json(t) AS row FROM auth."${table_name}" t`);
-      expect(JSON.stringify(rows), table_name).not.toContain(number);
+      dumps.push(JSON.stringify(rows));
     }
+    const dump = dumps.join('\n');
+    expect(dump).toContain(email); // the scan sees this sign-up's own rows
+    expect(dump).not.toContain(number);
 
     const signedIn = await signIn(auth, email, password);
     const signInBody = await signedIn.res.text();

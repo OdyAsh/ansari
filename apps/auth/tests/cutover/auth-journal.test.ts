@@ -30,6 +30,13 @@ describe('auth-journal.mjs', () => {
     expect(c0001).toContain("c.conname = 'account_provider_id_account_id_unique'");
   });
 
+  // No current migration adds a column, so this keeps the ADD COLUMN branch covered for the next one.
+  it('derives a column check from an ADD COLUMN statement', () => {
+    const checks = objectChecks('ALTER TABLE "auth"."users" ADD COLUMN "x" text;', '0002_add') as string[];
+    expect(checks).toHaveLength(1);
+    expect(checks[0]).toContain("table_schema = 'auth' and table_name = 'users' and column_name = 'x'");
+  });
+
   it('refuses a statement kind it cannot check, naming the migration', () => {
     expect(() => objectChecks('ALTER TABLE "auth"."users" DROP COLUMN "x";', '0002_drop')).toThrow(
       /0002_drop: a statement the journal check does not know/

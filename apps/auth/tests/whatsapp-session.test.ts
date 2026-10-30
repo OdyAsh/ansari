@@ -335,23 +335,37 @@ describe('the exchange', () => {
   }
 
   // Spec 329 §5, owner amendment 2: phone_number is accepted in any shape and ignored.
+  // Each shape returns the value sent and the needle that must appear in no row.
   it.each([
-    ['digits', () => remember(`1${digits(11)}`)],
-    ['a leading +', () => remember(`+${digits(12)}`)],
-    ['a JSON number', () => Number(`7${digits(10)}`)],
-    ['null', () => null],
-    ['an empty string', () => ''],
-    ['33 characters', () => remember(`9${digits(32)}`)],
-    ['letters and spaces', () => remember(`abc ${digits(8)} xyz`)],
+    ['digits', () => { const v = remember(`1${digits(11)}`); return [v, v] as const; }],
+    ['a leading +', () => { const v = remember(`+${digits(12)}`); return [v, v] as const; }],
+    ['a JSON number', () => { const n = remember(`7${digits(10)}`); return [Number(n), n] as const; }],
+    ['a nested object', () => { const n = remember(`5${digits(11)}`); return [{ e164: n, country: 'US' }, n] as const; }],
+    ['null', () => [null, null] as const],
+    ['an empty string', () => ['', null] as const],
+    ['33 characters', () => { const v = remember(`9${digits(32)}`); return [v, v] as const; }],
+    ['letters and spaces', () => { const v = remember(`abc ${digits(8)} xyz`); return [v, v] as const; }],
   ] as const)('phone_number as %s → 200, and the number is in no auth row', async (_name, make) => {
-    const value = make();
+    const [value, needle] = make();
     const bsuid = newBsuid();
     const res = await post({ bsuid, phone_number: value });
     expect(res.status, res.text).toBe(200);
     const rows = await authRowsText();
     expect(rows).toContain(bsuid); // the scan sees this exchange's own writes
-    if (value !== null && String(value).length > 2) expect(rows).not.toContain(String(value));
+    if (needle !== null) expect(rows).not.toContain(needle);
     expect(res.text).not.toContain('phone');
+  });
+
+  it('a maximal valid body (a 256-character BSUID and a long phone_number) → 200, the number in no row', async () => {
+    const bsuid = remember(`M.${'7'.repeat(254)}`);
+    const number = remember(`3${digits(500)}`);
+    const body = JSON.stringify({ bsuid, phone_number: number });
+    expect(Buffer.byteLength(body)).toBeLessThan(limits.EXCHANGE_BODY_LIMIT);
+    const res = await post(body);
+    expect(res.status, res.text).toBe(200);
+    const rows = await authRowsText();
+    expect(rows).toContain(bsuid);
+    expect(rows).not.toContain(number);
   });
 });
 
