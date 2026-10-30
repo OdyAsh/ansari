@@ -300,7 +300,7 @@ Order proven for migration `0003` on 2026-08-02:
      steps: `grant-admin.ts <email>` shows the account (id, email, created_at,
      email_verified, role) and grants nothing; `grant-admin.ts <email> --confirm
      <id>` grants exactly that account. It never creates an account or touches a
-     password, and it refuses the system domain. A new admin signs up first; a
+     password, and it never grants to a system- or noreply-domain address (`--revoke` demotes any account). A new admin signs up first; a
      warning on a recent or unverified account means: confirm the person out of
      band before `--confirm`. There is no `ADMIN_EMAILS` on `apps/auth` (spec
      H-7): the role in the auth database is the only admin truth.
