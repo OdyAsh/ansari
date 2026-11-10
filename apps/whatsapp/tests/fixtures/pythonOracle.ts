@@ -832,6 +832,287 @@ export const MESSAGE_AGE_CASES: Array<[secondsAgo: number | null, unixTime: numb
   ]
 ];
 
+export const RATE_LIMITED_NOTICE_CASES: Array<[retryAfterSeconds: number, notice: string]> = [
+  [
+    -5,
+    "You are sending messages too quickly. Please try again in about 1 minute."
+  ],
+  [
+    0,
+    "You are sending messages too quickly. Please try again in about 1 minute."
+  ],
+  [
+    1,
+    "You are sending messages too quickly. Please try again in about 1 minute."
+  ],
+  [
+    59,
+    "You are sending messages too quickly. Please try again in about 1 minute."
+  ],
+  [
+    60,
+    "You are sending messages too quickly. Please try again in about 1 minute."
+  ],
+  [
+    61,
+    "You are sending messages too quickly. Please try again in about 2 minutes."
+  ],
+  [
+    119,
+    "You are sending messages too quickly. Please try again in about 2 minutes."
+  ],
+  [
+    120,
+    "You are sending messages too quickly. Please try again in about 2 minutes."
+  ],
+  [
+    121,
+    "You are sending messages too quickly. Please try again in about 3 minutes."
+  ],
+  [
+    300,
+    "You are sending messages too quickly. Please try again in about 5 minutes."
+  ],
+  [
+    899,
+    "You are sending messages too quickly. Please try again in about 15 minutes."
+  ],
+  [
+    900,
+    "You are sending messages too quickly. Please try again in about 15 minutes."
+  ],
+  [
+    3599,
+    "You are sending messages too quickly. Please try again in about 60 minutes."
+  ],
+  [
+    3600,
+    "You are sending messages too quickly. Please try again in about 60 minutes."
+  ],
+  [
+    86400,
+    "You are sending messages too quickly. Please try again in about 1440 minutes."
+  ]
+];
+
+export const UNSUPPORTED_NOTICE_CASES: Array<[messageType: string, sent: string[]]> = [
+  [
+    "image",
+    [
+      "Sorry, I can't process images yet. Please send me a text message."
+    ]
+  ],
+  [
+    "audio",
+    [
+      "Sorry, I can't process audios yet. Please send me a text message."
+    ]
+  ],
+  [
+    "video",
+    [
+      "Sorry, I can't process videos yet. Please send me a text message."
+    ]
+  ],
+  [
+    "sticker",
+    [
+      "Sorry, I can't process stickers yet. Please send me a text message."
+    ]
+  ],
+  [
+    "document",
+    [
+      "Sorry, I can't process documents yet. Please send me a text message."
+    ]
+  ],
+  [
+    "location",
+    [
+      "Sorry, I can't process locations yet. Please send me a text message."
+    ]
+  ],
+  [
+    "contacts",
+    [
+      "Sorry, I can't process contacts yet. Please send me a text message."
+    ]
+  ],
+  [
+    "reaction",
+    [
+      "Sorry, I can't process reactions yet. Please send me a text message."
+    ]
+  ],
+  [
+    "interactive",
+    [
+      "Sorry, I can't process interactives yet. Please send me a text message."
+    ]
+  ],
+  [
+    "button",
+    [
+      "Sorry, I can't process buttons yet. Please send me a text message."
+    ]
+  ],
+  [
+    "order",
+    [
+      "Sorry, I can't process orders yet. Please send me a text message."
+    ]
+  ],
+  [
+    "system",
+    [
+      "Sorry, I can't process systems yet. Please send me a text message."
+    ]
+  ],
+  [
+    "errors",
+    [
+      "Sorry, I can't process errors yet. Please send me a text message."
+    ]
+  ],
+  [
+    "unsupported",
+    [
+      "Sorry, I can't process this media type yet. Please send me a text message."
+    ]
+  ],
+  [
+    "images",
+    [
+      "Sorry, I can't process images yet. Please send me a text message."
+    ]
+  ],
+  [
+    "text",
+    [
+      "Sorry, I can't process texts yet. Please send me a text message."
+    ]
+  ],
+  [
+    "s",
+    [
+      "Sorry, I can't process s yet. Please send me a text message."
+    ]
+  ],
+  [
+    "Image",
+    [
+      "Sorry, I can't process Images yet. Please send me a text message."
+    ]
+  ],
+  [
+    "",
+    []
+  ]
+];
+
+export const THREAD_TITLE_CASES: Cases = [
+  [
+    "",
+    ""
+  ],
+  [
+    "   ",
+    ""
+  ],
+  [
+    "hello",
+    "hello"
+  ],
+  [
+    "what is ansari",
+    "what is ansari"
+  ],
+  [
+    "one two three four five six seven eight nine",
+    "one two three four five six"
+  ],
+  [
+    "one two three four five six",
+    "one two three four five six"
+  ],
+  [
+    "one two three four five six seven",
+    "one two three four five six"
+  ],
+  [
+    "  lead and   trail  ",
+    "lead and trail"
+  ],
+  [
+    "tab\there\nnew\r\nline",
+    "tab here new line"
+  ],
+  [
+    "no\u00a0break\u2003em\u3000ideographic space",
+    "no break em ideographic space"
+  ],
+  [
+    "line\u2028separator\u2029paragraph",
+    "line separator paragraph"
+  ],
+  [
+    "c0\u001cfile\u001dgroup\u001erecord\u001funit\u0085next",
+    "c0 file group record unit next"
+  ],
+  [
+    "\ufeffbom is not whitespace",
+    "\ufeffbom is not whitespace"
+  ],
+  [
+    "zero\u200bwidth stays",
+    "zero\u200bwidth stays"
+  ],
+  [
+    "\u0645\u0631\u062d\u0628\u0627 \u0643\u064a\u0641 \u062d\u0627\u0644\u0643 \u064a\u0627 \u0623\u062e\u064a \u0627\u0644\u0643\u0631\u064a\u0645 \u0623\u0631\u064a\u062f \u0627\u0644\u0633\u0624\u0627\u0644",
+    "\u0645\u0631\u062d\u0628\u0627 \u0643\u064a\u0641 \u062d\u0627\u0644\u0643 \u064a\u0627 \u0623\u062e\u064a \u0627\u0644\u0643\u0631\u064a\u0645"
+  ],
+  [
+    "\ud83d\ude00 emoji \ud83d\ude00 words",
+    "\ud83d\ude00 emoji \ud83d\ude00 words"
+  ],
+  [
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  ]
+];
+
+export const PYTHON_WHITESPACE: number[] = [
+  9,
+  10,
+  11,
+  12,
+  13,
+  28,
+  29,
+  30,
+  31,
+  32,
+  133,
+  160,
+  5760,
+  8192,
+  8193,
+  8194,
+  8195,
+  8196,
+  8197,
+  8198,
+  8199,
+  8200,
+  8201,
+  8202,
+  8232,
+  8233,
+  8239,
+  8287,
+  12288
+];
+
 export const SPLITTER_CASES: Record<string, SplitSummary> = {
   "short": {
     "count": 1,

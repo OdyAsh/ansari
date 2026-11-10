@@ -23,6 +23,7 @@ import json
 import math
 import os
 import sys
+import types
 
 # Dummy credentials, as in legacy/whatsapp/tests/conftest.py. Nothing here is a real secret.
 for key, value in {
@@ -48,6 +49,10 @@ from ansari_whatsapp.presenters.whatsapp_message_formatter import (  # noqa: E40
     convert_italic_syntax,
     format_for_whatsapp,
     format_nested_lists,
+)
+from ansari_whatsapp.services.whatsapp_conversation_manager import (  # noqa: E402
+    WhatsAppConversationManager,
+    _rate_limited_notice,
 )
 from ansari_whatsapp.utils.config import get_settings  # noqa: E402
 from ansari_whatsapp.utils.exceptions import UnexpectedMetaPayloadError  # noqa: E402
@@ -256,6 +261,77 @@ REPR_INPUTS = [
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+# Conversation manager: the notices that depend on an input, and the thread title
+# ---------------------------------------------------------------------------------------------------------------------
+
+RETRY_AFTER_INPUTS = [-5, 0, 1, 59, 60, 61, 119, 120, 121, 300, 899, 900, 3599, 3600, 86400]
+
+# What Meta calls the type of a message that is not text. "errors" is what the parser reports for an unsupported one;
+# "unsupported" (with the replace in handle_unsupported_message) is kept to show that branch.
+MEDIA_TYPE_INPUTS = [
+    "image", "audio", "video", "sticker", "document", "location", "contacts", "reaction", "interactive", "button",
+    "order", "system", "errors", "unsupported", "images", "text", "s", "Image", "",
+]
+
+THREAD_TITLE_INPUTS = [
+    "",
+    "   ",
+    "hello",
+    "what is ansari",
+    "one two three four five six seven eight nine",
+    "one two three four five six",
+    "one two three four five six seven",
+    "  lead and   trail  ",
+    "tab\there\nnew\r\nline",
+    "no\u00a0break\u2003em\u3000ideographic space",
+    "line\u2028separator\u2029paragraph",
+    "c0\x1cfile\x1dgroup\x1erecord\x1funit\x85next",
+    "\ufeffbom is not whitespace",
+    "zero\u200bwidth stays",
+    "\u0645\u0631\u062d\u0628\u0627 \u0643\u064a\u0641 \u062d\u0627\u0644\u0643 \u064a\u0627 \u0623\u062e\u064a \u0627\u0644\u0643\u0631\u064a\u0645 \u0623\u0631\u064a\u062f \u0627\u0644\u0633\u0624\u0627\u0644",
+    "\U0001f600 emoji \U0001f600 words",
+    "x" * 500,
+]
+
+
+def _manager(message_type: str = "text") -> WhatsAppConversationManager:
+    return WhatsAppConversationManager(
+        bsuid=BSUID, incoming_msg_type=message_type, incoming_msg_body={}, message_id="wamid.ORACLE"
+    )
+
+
+def unsupported_notice_case(message_type: str):
+    """What the user is sent for a message of this type (nothing at all when the type is empty)."""
+    sent = []
+    manager = _manager(message_type)
+
+    async def capture(msg_body, recipient_bsuid_or_phone=None):
+        sent.append(msg_body)
+
+    manager.send_whatsapp_message = capture
+    asyncio.run(manager.handle_unsupported_message())
+    return [message_type, sent]
+
+
+def thread_title_case(first_message: str):
+    """The title the manager gives a new thread, taken from the real _resolve_thread."""
+    titles = []
+    manager = _manager()
+    manager.token = "oracle-token"
+
+    async def no_thread_yet(token):
+        return {"thread_id": None, "last_message_time": None}
+
+    async def create_thread(token, title):
+        titles.append(title)
+        return {"thread_id": "t1"}
+
+    manager.ansari_client = types.SimpleNamespace(get_last_thread_info=no_thread_yet, create_thread=create_thread)
+    asyncio.run(manager._resolve_thread(first_message))
+    return [first_message, titles[0]]
+
+
+# ---------------------------------------------------------------------------------------------------------------------
 # Splitter: inputs are described by a recipe both languages can rebuild; the expected answer is a summary
 # ---------------------------------------------------------------------------------------------------------------------
 
@@ -407,6 +483,11 @@ def main(out_path: str) -> None:
         "TIME_DELTA_CASES": [[s, format_time_delta(s)] for s in TIME_DELTA_INPUTS],
         "TIME_PASSED_CASES": [time_passed_case(s) for s in TIME_PASSED_INPUTS],
         "MESSAGE_AGE_CASES": [message_age_case(a) for a in MESSAGE_AGE_INPUTS],
+        "RATE_LIMITED_NOTICE_CASES": [[s, _rate_limited_notice(s)] for s in RETRY_AFTER_INPUTS],
+        "UNSUPPORTED_NOTICE_CASES": [unsupported_notice_case(t) for t in MEDIA_TYPE_INPUTS],
+        "THREAD_TITLE_CASES": [thread_title_case(t) for t in THREAD_TITLE_INPUTS],
+        # Every code point str.split() treats as a separator: the thread title is cut at these.
+        "PYTHON_WHITESPACE": [i for i in range(0x110000) if chr(i).isspace()],
         "SPLITTER_CASES": {name: summarise(split_message(text)) for name, text in SPLITTER_RECIPES.items()},
         "PARSER_CASES": [
             {"name": name, "replyByPhone": by_phone, "payload": body, "expected": run_parser(body, by_phone)}
@@ -430,6 +511,10 @@ def main(out_path: str) -> None:
         "TIME_DELTA_CASES": "Array<[seconds: number, formatted: string]>",
         "TIME_PASSED_CASES": "Array<[secondsAgo: number | null, passed: number | 'inf', logging: string]>",
         "MESSAGE_AGE_CASES": "Array<[secondsAgo: number | null, unixTime: number | null, tooOld: boolean]>",
+        "RATE_LIMITED_NOTICE_CASES": "Array<[retryAfterSeconds: number, notice: string]>",
+        "UNSUPPORTED_NOTICE_CASES": "Array<[messageType: string, sent: string[]]>",
+        "THREAD_TITLE_CASES": "Cases",
+        "PYTHON_WHITESPACE": "number[]",
         "SPLITTER_CASES": "Record<string, SplitSummary>",
         "PARSER_CASES": "ParserCase[]",
         "EMPTY_TEXT": "{ direction: string; format: string }",
