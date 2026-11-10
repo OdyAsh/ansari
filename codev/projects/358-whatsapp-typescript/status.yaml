@@ -1,9 +1,30 @@
 id: '358'
 title: whatsapp-typescript
 protocol: spir
-phase: plan
-plan_phases: []
-current_plan_phase: null
+phase: implement
+plan_phases:
+  - id: phase_1
+    title: Scaffold apps/whatsapp, config, masked logging
+    status: in_progress
+  - id: phase_2
+    title: 'Pure logic: formatter, splitter, webhook parser, language and time helpers'
+    status: pending
+  - id: phase_3
+    title: 'Service clients: apps/auth exchange, apps/api streaming, Meta API'
+    status: pending
+  - id: phase_4
+    title: Conversation manager
+    status: pending
+  - id: phase_5
+    title: 'HTTP app: webhook verification, signature check, immediate 200'
+    status: pending
+  - id: phase_6
+    title: Docker, Railway config, CI, turbo and documentation
+    status: pending
+  - id: phase_7
+    title: Staging redeploy, smoke test and legacy rollback note
+    status: pending
+current_plan_phase: phase_1
 gates:
   spec-approval:
     status: approved
@@ -16,11 +37,13 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history: []
 started_at: '2026-11-10T12:39:08.669Z'
-updated_at: '2026-11-10T14:06:42.539Z'
+updated_at: '2026-11-10T14:06:46.785Z'
 context_refreshes:
   - boundary: enter:plan
     at: '2026-11-10T13:37:26.336Z'
     acknowledged_at: '2026-11-10T13:37:36.557Z'
+  - boundary: enter:implement
+    at: '2026-11-10T14:06:46.783Z'
