@@ -20,6 +20,15 @@ export class UnexpectedMetaPayloadError extends Error {
   }
 }
 
+/**
+ * The webhook body is not the shape Meta documents (no entries, no metadata, a timestamp that is not a number...).
+ * Python raised a bare `Exception` (or an IndexError/ValueError) for all of these; the HTTP layer answers them with
+ * `INVALID_PAYLOAD`. Distinct from `UnexpectedMetaPayloadError`, which is the one case where the user can be told.
+ */
+export class InvalidMetaPayloadError extends Error {
+  override readonly name = 'InvalidMetaPayloadError';
+}
+
 /** Exchanging a BSUID for a JWT with apps/auth failed (an outage, a 500, or a network fault). */
 export class AuthTokenError extends Error {
   override readonly name: string = 'AuthTokenError';
