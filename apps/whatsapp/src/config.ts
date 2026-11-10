@@ -192,7 +192,10 @@ export type Env = z.output<typeof schema>;
 export const CONFIG_KEYS = Object.keys(rawSchema.shape);
 
 /**
- * Validate an environment and return the settings, or throw one error that names every bad variable.
+ * Validate an environment and return the settings, or throw one error that names every variable
+ * failing its own check. The cross-field rules (mocks outside local, phone replies in production)
+ * only run once every variable passes on its own, as with Pydantic's `mode="after"` validators, so
+ * fixing the first round of errors can reveal one more.
  *
  * Takes the environment as an argument (default: the real one) so tests can pass their own
  * object. Python counterpart: `WhatsAppSettings()`; there the tests had to patch
