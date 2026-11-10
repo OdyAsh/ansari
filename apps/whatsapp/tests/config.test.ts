@@ -1,0 +1,201 @@
+/**
+ * Config rules.
+ *
+ * Python tests ported: test_bsuid_auth_flow.py (mock flags and MOCK_AUTH_TOKEN refused outside
+ * local, META_REPLY_BY_PHONE off by default and refused in production) and
+ * test_environment_behaviour.py (app secret required, log level defaults).
+ *
+ * `buildConfig(env)` takes the environment as an object, so no test touches `process.env`
+ * (the Python tests patched `os.environ` and cleared an `lru_cache` around every case).
+ * `getEnv`/`resetEnvCache` are named like apps/api's.
+ */
+import { describe, expect, it } from 'vitest';
+import { buildConfig, getEnv, MOCK_FLAGS, resetEnvCache, Secret } from '../src/config';
+
+/** The smallest valid environment: every variable without a default. */
+function env(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
+  const base: Record<string, string | undefined> = {
+    DEPLOYMENT_TYPE: 'local',
+    AUTH_WHATSAPP_API_KEY: 'test-key',
+    META_BUSINESS_PHONE_NUMBER_ID: '123456',
+    META_ACCESS_TOKEN_FROM_SYS_USER: 'test-token',
+    META_WEBHOOK_VERIFY_TOKEN: 'test-verify',
+    META_ANSARI_APP_SECRET: 'test-secret',
+  };
+  return { ...base, ...overrides };
+}
+
+describe('defaults', () => {
+  it('uses the documented defaults', () => {
+    const cfg = buildConfig(env());
+    expect(cfg.BACKEND_SERVER_URL).toBe('http://localhost:3000');
+    expect(cfg.AUTH_SERVER_URL).toBe('http://localhost:3100');
+    expect(cfg.META_API_VERSION).toBe('v26.0');
+    expect(cfg.WHATSAPP_CHAT_RETENTION_HOURS).toBe(3);
+    expect(cfg.WHATSAPP_MESSAGE_AGE_THRESHOLD_SECONDS).toBe(86400);
+    expect(cfg.ALWAYS_RETURN_OK_TO_META).toBe(true);
+    expect(cfg.WA_MAINTENANCE_MODE).toBe(false);
+    expect(cfg.PORT).toBe(3200);
+  });
+
+  it('builds the Meta send URL from the version and the phone number id', () => {
+    expect(buildConfig(env()).META_API_URL).toBe('https://graph.facebook.com/v26.0/123456/messages');
+  });
+});
+
+describe('booleans', () => {
+  it('reads "False" as false (a plain string check would call it true)', () => {
+    expect(buildConfig(env({ WA_MAINTENANCE_MODE: 'False' })).WA_MAINTENANCE_MODE).toBe(false);
+  });
+
+  it.each(['True', 'true', '1'])('reads %s as true', (value) => {
+    expect(buildConfig(env({ WA_MAINTENANCE_MODE: value })).WA_MAINTENANCE_MODE).toBe(true);
+  });
+
+  it.each(['False', 'false', '0'])('reads %s as false', (value) => {
+    expect(buildConfig(env({ WA_MAINTENANCE_MODE: value })).WA_MAINTENANCE_MODE).toBe(false);
+  });
+
+  // Pydantic accepted these; apps/api's switches do not, and neither does this service.
+  it.each(['yes', 'on', 'TRUE', 'maybe', ''])('refuses "%s" instead of guessing', (value) => {
+    expect(() => buildConfig(env({ WA_MAINTENANCE_MODE: value }))).toThrow(/WA_MAINTENANCE_MODE/);
+  });
+
+  it('ALWAYS_RETURN_OK_TO_META is on unless set to false', () => {
+    expect(buildConfig(env()).ALWAYS_RETURN_OK_TO_META).toBe(true);
+    expect(buildConfig(env({ ALWAYS_RETURN_OK_TO_META: 'False' })).ALWAYS_RETURN_OK_TO_META).toBe(false);
+  });
+});
+
+describe('required settings', () => {
+  it.each(['local', 'staging', 'production'])('fails without the app secret (%s)', (deploymentType) => {
+    expect(() => buildConfig(env({ DEPLOYMENT_TYPE: deploymentType, META_ANSARI_APP_SECRET: undefined }))).toThrow(
+      /META_ANSARI_APP_SECRET/,
+    );
+  });
+
+  it('names every bad variable in one error, whatever order they are listed in', () => {
+    const message = (() => {
+      try {
+        buildConfig({ DEPLOYMENT_TYPE: 'moon' });
+      } catch (error) {
+        return (error as Error).message;
+      }
+      return '';
+    })();
+    for (const name of ['DEPLOYMENT_TYPE', 'AUTH_WHATSAPP_API_KEY', 'META_ANSARI_APP_SECRET']) {
+      expect(message).toContain(name);
+    }
+  });
+});
+
+describe('secrets', () => {
+  it('never prints a secret, however it is logged', () => {
+    const cfg = buildConfig(env({ META_ANSARI_APP_SECRET: 'super-secret-value' }));
+    expect(cfg.META_ANSARI_APP_SECRET).toBeInstanceOf(Secret);
+    expect(String(cfg.META_ANSARI_APP_SECRET)).not.toContain('super-secret-value');
+    expect(`${cfg.META_ANSARI_APP_SECRET}`).not.toContain('super-secret-value');
+    expect(JSON.stringify(cfg)).not.toContain('super-secret-value');
+  });
+
+  it('reveals the value only on request', () => {
+    expect(buildConfig(env({ META_ANSARI_APP_SECRET: 'super-secret-value' })).META_ANSARI_APP_SECRET.reveal()).toBe(
+      'super-secret-value',
+    );
+  });
+});
+
+describe('mocks are only for local', () => {
+  it.each(MOCK_FLAGS)('%s is allowed locally', (flag) => {
+    expect(buildConfig(env({ DEPLOYMENT_TYPE: 'local', [flag]: 'True' }))[flag]).toBe(true);
+  });
+
+  it.each(MOCK_FLAGS.flatMap((flag) => ['development', 'staging', 'production'].map((type) => [flag, type] as const)))(
+    '%s is refused when DEPLOYMENT_TYPE=%s',
+    (flag, deploymentType) => {
+      expect(() => buildConfig(env({ DEPLOYMENT_TYPE: deploymentType, [flag]: 'True' }))).toThrow(new RegExp(flag));
+    },
+  );
+
+  it.each([
+    ['local', true],
+    ['staging', false],
+    ['production', false],
+  ] as const)('a shared mock token in %s is allowed: %s', (deploymentType, allowed) => {
+    const attempt = () => buildConfig(env({ DEPLOYMENT_TYPE: deploymentType, MOCK_AUTH_TOKEN: 'a.real.jwt' }));
+    if (allowed) {
+      expect(attempt().MOCK_AUTH_TOKEN?.reveal()).toBe('a.real.jwt');
+    } else {
+      expect(attempt).toThrow(/MOCK_AUTH_TOKEN/);
+    }
+  });
+
+  it('an empty mock token is fine in any environment', () => {
+    expect(buildConfig(env({ DEPLOYMENT_TYPE: 'production', MOCK_AUTH_TOKEN: '' })).DEPLOYMENT_TYPE).toBe('production');
+  });
+});
+
+describe('META_REPLY_BY_PHONE', () => {
+  it('defaults to off', () => {
+    expect(buildConfig(env()).META_REPLY_BY_PHONE).toBe(false);
+  });
+
+  it.each(['local', 'development', 'staging'])('is allowed in %s', (deploymentType) => {
+    expect(buildConfig(env({ DEPLOYMENT_TYPE: deploymentType, META_REPLY_BY_PHONE: 'True' })).META_REPLY_BY_PHONE).toBe(true);
+  });
+
+  it('is refused in production', () => {
+    expect(() => buildConfig(env({ DEPLOYMENT_TYPE: 'production', META_REPLY_BY_PHONE: 'True' }))).toThrow(
+      /META_REPLY_BY_PHONE is not allowed when DEPLOYMENT_TYPE=production/,
+    );
+  });
+});
+
+describe('log level', () => {
+  it.each([
+    ['local', 'DEBUG'],
+    ['staging', 'INFO'],
+    ['production', 'INFO'],
+  ])('defaults to the right level in %s', (deploymentType, expected) => {
+    expect(buildConfig(env({ DEPLOYMENT_TYPE: deploymentType })).LOGGING_LEVEL).toBe(expected);
+  });
+
+  it('an explicit level wins', () => {
+    expect(buildConfig(env({ LOGGING_LEVEL: 'WARNING' })).LOGGING_LEVEL).toBe('WARNING');
+  });
+});
+
+describe('ORIGINS', () => {
+  it('always allows the backend, the CI test server and WhatsApp Web', () => {
+    expect(buildConfig(env()).ORIGINS).toEqual(['http://localhost:3000', 'testserver', 'https://web.whatsapp.com']);
+  });
+
+  it('keeps configured origins first and does not repeat one', () => {
+    const cfg = buildConfig(env({ ORIGINS: '"https://api.ansari.chat, https://web.whatsapp.com"' }));
+    expect(cfg.ORIGINS).toEqual(['https://api.ansari.chat', 'https://web.whatsapp.com', 'http://localhost:3000', 'testserver']);
+  });
+});
+
+describe('MAINTENANCE_MODE is not this service\'s switch', () => {
+  it('ignores the variable apps/api uses', () => {
+    expect(buildConfig(env({ MAINTENANCE_MODE: 'true' })).WA_MAINTENANCE_MODE).toBe(false);
+  });
+});
+
+describe('getEnv cache', () => {
+  it('validates the real environment once and can be reset', () => {
+    resetEnvCache();
+    const saved = { ...process.env };
+    Object.assign(process.env, env());
+    try {
+      const first = getEnv();
+      expect(getEnv()).toBe(first);
+      resetEnvCache();
+      expect(getEnv()).not.toBe(first);
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+      resetEnvCache();
+    }
+  });
+});
