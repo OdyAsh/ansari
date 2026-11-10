@@ -218,6 +218,43 @@ def message_age_case(age):
     return [age, unix, is_message_too_old(unix)]
 
 
+# Values the services print with !r or inside an f-string of a list or dict (the Meta error summary and payload keys).
+# JSON-shaped, so the same value can be written on both sides.
+REPR_INPUTS = [
+    "plain",
+    "it's",
+    'say "hi"',
+    "it's \"both\"",
+    "line\nbreak",
+    "tab\there",
+    "back\\slash",
+    "",
+    " ",
+    "carriage\rreturn",
+    "\u00e9 accent",
+    "\u0645\u0631\u062d\u0628\u0627",
+    "\U0001f600 emoji",
+    "nul\x00byte",
+    "del\x7fchar",
+    "zero\u200bwidth",
+    "no\u00a0break space",
+    "line\u2028separator",
+    131030,
+    -5,
+    0,
+    1.5,
+    True,
+    False,
+    None,
+    [],
+    ["a", "b"],
+    ["it's", 1, None],
+    {},
+    {"k": "v"},
+    {"a": [1, "x"], "it's": {"n": None}},
+]
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Splitter: inputs are described by a recipe both languages can rebuild; the expected answer is a summary
 # ---------------------------------------------------------------------------------------------------------------------
@@ -366,6 +403,7 @@ def main(out_path: str) -> None:
         "HEADER_CASES": [[t, convert_headers(t)] for t in HEADER_INPUTS],
         "NESTED_LIST_CASES": [[t, format_nested_lists(t)] for t in NESTED_INPUTS],
         "DIRECTION_CASES": [[t, get_language_direction_from_text(t)] for t in DIRECTION_INPUTS],
+        "REPR_CASES": [[value, repr(value)] for value in REPR_INPUTS],
         "TIME_DELTA_CASES": [[s, format_time_delta(s)] for s in TIME_DELTA_INPUTS],
         "TIME_PASSED_CASES": [time_passed_case(s) for s in TIME_PASSED_INPUTS],
         "MESSAGE_AGE_CASES": [message_age_case(a) for a in MESSAGE_AGE_INPUTS],
@@ -388,6 +426,7 @@ def main(out_path: str) -> None:
         "HEADER_CASES": "Cases",
         "NESTED_LIST_CASES": "Cases",
         "DIRECTION_CASES": "Cases",
+        "REPR_CASES": "Array<[value: unknown, python: string]>",
         "TIME_DELTA_CASES": "Array<[seconds: number, formatted: string]>",
         "TIME_PASSED_CASES": "Array<[secondsAgo: number | null, passed: number | 'inf', logging: string]>",
         "MESSAGE_AGE_CASES": "Array<[secondsAgo: number | null, unixTime: number | null, tooOld: boolean]>",

@@ -66,3 +66,44 @@ export class AuthRateLimitedError extends AuthTokenError {
 export class AnsariClientError extends Error {
   override readonly name: string = 'AnsariClientError';
 }
+
+/** apps/api answered 401: it refused this user's token (a session can end after the token was signed). */
+export class ApiUnauthorizedError extends AnsariClientError {
+  override readonly name = 'ApiUnauthorizedError';
+}
+
+/** Thread creation failed. */
+export class ThreadCreationError extends AnsariClientError {
+  override readonly name = 'ThreadCreationError';
+}
+
+/** Deleting an expired thread failed. */
+export class ThreadDeletionError extends AnsariClientError {
+  override readonly name = 'ThreadDeletionError';
+}
+
+/** Retrieving thread info failed. */
+export class ThreadInfoError extends AnsariClientError {
+  override readonly name = 'ThreadInfoError';
+}
+
+/** Message processing failed. */
+export class MessageProcessingError extends AnsariClientError {
+  override readonly name = 'MessageProcessingError';
+}
+
+/**
+ * A call to Meta's API failed. Python let httpx's `HTTPStatusError` and `RequestError` escape from the Meta service;
+ * callers only ever caught `Exception`, so one class carries both: `status` is Meta's HTTP status, or `undefined` for a
+ * network fault or timeout.
+ */
+export class MetaApiError extends Error {
+  override readonly name = 'MetaApiError';
+
+  readonly status: number | undefined;
+
+  constructor(message: string, status?: number, options?: { cause?: unknown }) {
+    super(message, options);
+    this.status = status;
+  }
+}

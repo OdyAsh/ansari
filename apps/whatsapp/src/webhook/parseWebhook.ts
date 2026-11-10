@@ -22,6 +22,7 @@ import type { Env } from '../config';
 import { InvalidMetaPayloadError, UnexpectedMetaPayloadError } from '../errors';
 import type { Logger } from '../logger';
 import { redactValues } from '../logMasking';
+import { pythonList } from '../utils/pythonRepr';
 
 /** What a webhook turned out to be. */
 export type ParsedWebhook =
@@ -73,11 +74,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 function has(obj: object, key: string): boolean {
   return Object.hasOwn(obj, key);
-}
-
-/** Python's `list` repr, `['a', 'b']`, so error messages read the same as before. */
-function pythonList(items: string[]): string {
-  return `[${items.map((item) => `'${item}'`).join(', ')}]`;
 }
 
 function invalidPayload(message: string, logger?: Pick<Logger, 'error'>): InvalidMetaPayloadError {

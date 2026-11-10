@@ -480,6 +480,150 @@ export const DIRECTION_CASES: Cases = [
   ]
 ];
 
+export const REPR_CASES: Array<[value: unknown, python: string]> = [
+  [
+    "plain",
+    "'plain'"
+  ],
+  [
+    "it's",
+    "\"it's\""
+  ],
+  [
+    "say \"hi\"",
+    "'say \"hi\"'"
+  ],
+  [
+    "it's \"both\"",
+    "'it\\'s \"both\"'"
+  ],
+  [
+    "line\nbreak",
+    "'line\\nbreak'"
+  ],
+  [
+    "tab\there",
+    "'tab\\there'"
+  ],
+  [
+    "back\\slash",
+    "'back\\\\slash'"
+  ],
+  [
+    "",
+    "''"
+  ],
+  [
+    " ",
+    "' '"
+  ],
+  [
+    "carriage\rreturn",
+    "'carriage\\rreturn'"
+  ],
+  [
+    "\u00e9 accent",
+    "'\u00e9 accent'"
+  ],
+  [
+    "\u0645\u0631\u062d\u0628\u0627",
+    "'\u0645\u0631\u062d\u0628\u0627'"
+  ],
+  [
+    "\ud83d\ude00 emoji",
+    "'\ud83d\ude00 emoji'"
+  ],
+  [
+    "nul\u0000byte",
+    "'nul\\x00byte'"
+  ],
+  [
+    "del\u007fchar",
+    "'del\\x7fchar'"
+  ],
+  [
+    "zero\u200bwidth",
+    "'zero\\u200bwidth'"
+  ],
+  [
+    "no\u00a0break space",
+    "'no\\xa0break space'"
+  ],
+  [
+    "line\u2028separator",
+    "'line\\u2028separator'"
+  ],
+  [
+    131030,
+    "131030"
+  ],
+  [
+    -5,
+    "-5"
+  ],
+  [
+    0,
+    "0"
+  ],
+  [
+    1.5,
+    "1.5"
+  ],
+  [
+    true,
+    "True"
+  ],
+  [
+    false,
+    "False"
+  ],
+  [
+    null,
+    "None"
+  ],
+  [
+    [],
+    "[]"
+  ],
+  [
+    [
+      "a",
+      "b"
+    ],
+    "['a', 'b']"
+  ],
+  [
+    [
+      "it's",
+      1,
+      null
+    ],
+    "[\"it's\", 1, None]"
+  ],
+  [
+    {},
+    "{}"
+  ],
+  [
+    {
+      "k": "v"
+    },
+    "{'k': 'v'}"
+  ],
+  [
+    {
+      "a": [
+        1,
+        "x"
+      ],
+      "it's": {
+        "n": null
+      }
+    },
+    "{'a': [1, 'x'], \"it's\": {'n': None}}"
+  ]
+];
+
 export const TIME_DELTA_CASES: Array<[seconds: number, formatted: string]> = [
   [
     0,
