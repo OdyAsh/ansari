@@ -8,10 +8,10 @@ plan_phases:
     status: complete
   - id: phase_2
     title: 'Pure logic: formatter, splitter, webhook parser, language and time helpers'
-    status: in_progress
+    status: complete
   - id: phase_3
     title: 'Service clients: apps/auth exchange, apps/api streaming, Meta API'
-    status: pending
+    status: in_progress
   - id: phase_4
     title: Conversation manager
     status: pending
@@ -24,7 +24,7 @@ plan_phases:
   - id: phase_7
     title: Staging redeploy, smoke test and legacy rollback note
     status: pending
-current_plan_phase: phase_2
+current_plan_phase: phase_3
 gates:
   spec-approval:
     status: approved
@@ -37,10 +37,10 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history: []
 started_at: '2026-11-10T12:39:08.669Z'
-updated_at: '2026-11-10T18:31:56.861Z'
+updated_at: '2026-11-10T18:32:16.131Z'
 context_refreshes:
   - boundary: enter:plan
     at: '2026-11-10T13:37:26.336Z'
@@ -51,3 +51,5 @@ context_refreshes:
   - boundary: plan-phase:phase_2
     at: '2026-11-10T17:47:59.160Z'
     acknowledged_at: '2026-11-10T17:48:30.123Z'
+  - boundary: plan-phase:phase_3
+    at: '2026-11-10T18:32:16.131Z'
