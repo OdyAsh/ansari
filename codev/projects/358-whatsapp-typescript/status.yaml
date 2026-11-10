@@ -5,10 +5,10 @@ phase: implement
 plan_phases:
   - id: phase_1
     title: Scaffold apps/whatsapp, config, masked logging
-    status: in_progress
+    status: complete
   - id: phase_2
     title: 'Pure logic: formatter, splitter, webhook parser, language and time helpers'
-    status: pending
+    status: in_progress
   - id: phase_3
     title: 'Service clients: apps/auth exchange, apps/api streaming, Meta API'
     status: pending
@@ -24,7 +24,7 @@ plan_phases:
   - id: phase_7
     title: Staging redeploy, smoke test and legacy rollback note
     status: pending
-current_plan_phase: phase_1
+current_plan_phase: phase_2
 gates:
   spec-approval:
     status: approved
@@ -37,10 +37,10 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history: []
 started_at: '2026-11-10T12:39:08.669Z'
-updated_at: '2026-11-10T15:18:26.007Z'
+updated_at: '2026-11-10T17:47:59.161Z'
 context_refreshes:
   - boundary: enter:plan
     at: '2026-11-10T13:37:26.336Z'
@@ -48,3 +48,5 @@ context_refreshes:
   - boundary: enter:implement
     at: '2026-11-10T14:06:46.783Z'
     acknowledged_at: '2026-11-10T14:07:00.688Z'
+  - boundary: plan-phase:phase_2
+    at: '2026-11-10T17:47:59.160Z'
