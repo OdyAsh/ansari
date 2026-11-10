@@ -23,8 +23,17 @@ function length(text: string): number {
  * 3. at paragraphs, falling back to fixed-size pieces cut at a space.
  *
  * A message within the limit comes back unchanged, as a list of one.
+ *
+ * Text with nothing but whitespace gives an empty list, and a whitespace-only piece is dropped from a longer message:
+ * WhatsApp refuses to send them. Python returned zero pieces for an answer of only newlines, and pieces of only spaces
+ * for an answer of only spaces, so the user got silence or an error (owner decision, 2026-11-10). The caller must treat
+ * an empty list as "nothing to send" and tell the user, not stay quiet.
  */
 export function splitMessage(msgBody: string): string[] {
+  return splitMessageUnchecked(msgBody).filter((chunk) => chunk.trim() !== '');
+}
+
+function splitMessageUnchecked(msgBody: string): string[] {
   if (length(msgBody) <= WHATSAPP_MAX_MESSAGE_LENGTH) return [msgBody];
 
   const headerChunks = splitByHeaders(msgBody, WHATSAPP_MAX_MESSAGE_LENGTH);

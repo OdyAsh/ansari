@@ -95,16 +95,49 @@ const INPUTS: Record<string, string> = {
   only_spaces: ' '.repeat(4001),
 };
 
+/** Inputs where the port differs from Python on purpose: a text that is only whitespace has nothing to send. */
+const FIXED = new Set(['only_spaces']);
+
 describe('splits exactly where Python splits', () => {
   it('covers every input the Python side was given', () => {
     expect(Object.keys(INPUTS).sort()).toEqual(Object.keys(SPLITTER_CASES).sort());
   });
 
-  it.each(Object.entries(SPLITTER_CASES))('%s', (name, expected) => {
+  it.each(Object.entries(SPLITTER_CASES).filter(([name]) => !FIXED.has(name)))('%s', (name, expected) => {
     const chunks = splitMessage(INPUTS[name]!);
     expect(chunks.map(codePoints)).toEqual(expected.lengths);
     expect(chunks).toHaveLength(expected.count);
     expect(createHash('sha256').update(chunks.join('\u0000'), 'utf8').digest('hex')).toBe(expected.sha256);
+  });
+});
+
+describe('text with nothing to send (fixed, differs from Python)', () => {
+  it('gives no messages for an empty answer', () => {
+    expect(splitMessage('')).toEqual([]);
+  });
+
+  // Python: an answer of only newlines gave no messages (matched here), and only spaces gave pieces of spaces,
+  // which WhatsApp rejects as an empty message
+  it.each([' ', '   ', '\n', '\n\n\n', ' \n \t \r\n', ' '.repeat(LIMIT + 1), '\n'.repeat(5000)])(
+    'gives no messages for whitespace only (%j)',
+    (text) => {
+      expect(splitMessage(text)).toEqual([]);
+    },
+  );
+
+  it('keeps the oracle honest: Python did send pieces of spaces', () => {
+    expect(SPLITTER_CASES.only_spaces!.count).toBe(2);
+  });
+
+  // The three paragraphs are too big to share a message (3000 + 3000 > 4000), so the spaces become a piece of their own
+  it('drops a whitespace-only piece from a longer answer but keeps the text around it', () => {
+    const text = `${'a'.repeat(3000)}\n\n${' '.repeat(3000)}\n\n${'b'.repeat(1500)}`;
+    const chunks = splitMessage(text);
+    expect(chunks).toEqual(['a'.repeat(3000), 'b'.repeat(1500)]);
+  });
+
+  it('does not trim or change a normal message', () => {
+    expect(splitMessage('  hello  \n')).toEqual(['  hello  \n']);
   });
 });
 

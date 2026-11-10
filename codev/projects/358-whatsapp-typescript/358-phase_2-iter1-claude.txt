@@ -8,11 +8,11 @@ parseWebhook.ts, InvalidMetaPayloadError, and their tests.
 Method: the Python suite barely covers the formatter, the time helpers and the parser, so the legacy Python code
 was run (main checkout's virtualenv, this worktree's source, verified by printing the module path) on a table of
 inputs, and its answers were written to tests/fixtures/pythonOracle.ts by tests/fixtures/generate_python_oracle.py.
-The TypeScript tests compare against that file, so "same as Python" is checked, not assumed. 197 oracle cases
-(51 formatter, 27 parser, 22 splitter, 21+16+7 time, 16 direction, 11+7+10+9 formatter steps).
+The TypeScript tests compare against that file, so "same as Python" is checked, not assumed. About 205 oracle
+cases (formatter, parser, splitter, time, direction, formatter steps), plus the fixed inputs listed below.
 
 Verified (ran it):
-- typecheck, lint and 332 vitest tests pass (84 from phase 1).
+- typecheck, lint and 351 vitest tests pass (84 from phase 1).
 - 13 rules were broken on purpose, one at a time, and a test failed each time; files restored byte-for-byte:
   direction counted in UTF-16 units, direction threshold, tie rounding, message exactly at the threshold, NaN
   timestamp, bold-before-italic, ASCII-only digits, first-marker-only rewrite, splitter without space preference,
@@ -36,10 +36,19 @@ Found and fixed while porting (JavaScript differs from Python):
 - A splitter performance bug of my own: recounting the growing chunk per paragraph took 2.2 s on 130k paragraphs.
   A running total makes it 67 ms with identical output.
 
-Behaviour kept from Python on purpose (looks like a bug, is not changed here; each is pinned by a test):
-- "2 * 3 and 4 * 5" becomes "2 _ 3 and 4 _ 5"; "***x***" becomes "**x**"; a "* a / * b" bullet list loses its bullets.
+Python bugs FIXED on the owner's instruction (2026-11-10), each pinned by a test showing Python's answer beside the new one:
+- A lone * beside a space is no longer an italic marker: "2 * 3 and 4 * 5" and "* a / * b" lists stay as written
+  (Python: "2 _ 3 and 4 _ 5", "_ a / _ b"). A nested "* b" now becomes "-- b" like a nested "- b".
+- "***x***" becomes "*_x_*" (Python: "**x**").
+- A reply of only whitespace gives an EMPTY list from splitMessage, and a whitespace-only piece is dropped from a
+  longer reply (Python: nothing for newlines, pieces of spaces for spaces, which WhatsApp rejects). The caller
+  (plan phase_4) must send the "couldn't process your message" notice for an empty list.
+  Verified by mutation: 6 deliberate breakages of the three fixes, each caught (two slipped through once and led
+  to a better test).
+
+Behaviour kept from Python on purpose (looks odd, not changed here; pinned by a test):
 - A CRLF header gets the \r inside the bold-italic markers.
-- An answer made only of newlines splits into NO chunks (callers must not rely on at least one).
+- A line of three stars (a markdown rule) becomes two stars, as in Python.
 
 Differences from Python, deliberate:
 - Empty text: Python raises ZeroDivisionError in the direction check (and so in format_for_whatsapp); the port answers

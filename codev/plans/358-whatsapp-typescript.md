@@ -82,6 +82,11 @@ The Python tests (197) are the oracle: each phase ports one layer bottom-up, tog
 
 **Done when**: all mapped cases pass with identical expected strings, including the 4000-character split, RTL handling, status/wrong-number/unsupported/stale webhook classification.
 
+**Deliberate differences from Python (owner decision, 2026-11-10)**: the Python formatter and splitter had three bugs that the port fixes instead of copying. Each is pinned by a test that shows Python's answer beside the new one.
+- A lone `*` beside a space is not an italic marker: `2 * 3 and 4 * 5` stays as written (Python: `2 _ 3 and 4 _ 5`) and a `* item` list keeps its bullets (Python: `_ item`).
+- `***text***` becomes `*_text_*` (Python: a stray `**text**`).
+- A reply with nothing but whitespace gives an empty list from `splitMessage` (Python: no pieces for newlines, pieces of spaces for spaces, which WhatsApp rejects). **Phase 4 must treat an empty list as "nothing to send" and send the user the same "couldn't process your message" notice as for an empty answer**, not stay silent.
+
 ### Phase 3: Service clients
 
 **Dependencies**: Phase 2

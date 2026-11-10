@@ -48,6 +48,30 @@ export const FORMATTER_CASES: Cases = [
     "**bold italic**"
   ],
   [
+    "***\ntext\n***",
+    "**\ntext\n**"
+  ],
+  [
+    "a *b c* d",
+    "a _b c_ d"
+  ],
+  [
+    "1 * 2 * 3 and *real*",
+    "1 _ 2 _ 3 and _real_"
+  ],
+  [
+    "***a*** and **b** and *c*",
+    "**a** and *b* and _c_"
+  ],
+  [
+    "**bold with *italic* inside**",
+    "*bold with _italic_ inside*"
+  ],
+  [
+    "* a\n* b\n* c",
+    "_ a\n_ b\n* c"
+  ],
+  [
     "_*mixed*_",
     "_*mixed*_"
   ],

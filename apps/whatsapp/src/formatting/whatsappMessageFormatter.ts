@@ -13,23 +13,26 @@
  *   U+0669, included); JavaScript's only matches 0-9. Arabic answers can number their lists with Arabic-Indic digits.
  * - Replacement text says `$1` where Python says `\1`.
  *
- * Known oddities, kept on purpose because the job here is to port behaviour, not to redesign it:
- * - Any pair of lone `*` becomes italics, even in arithmetic: "2 * 3 and 4 * 5" turns into "2 _ 3 and 4 _ 5".
- * - `***both***` becomes `**both**`: the italic step consumes nothing, then bold turns `**` into `*`, leaving two stars.
- * - The italic step can pair a `*` across lines, so a `* item` bullet list loses its bullets (`_ item`).
+ * Three Python bugs are fixed here on purpose (owner decision, 2026-11-10), so the output differs from Python for them:
+ * - A lone `*` next to a space is no longer an italic marker. Python turned "2 * 3 and 4 * 5" into "2 _ 3 and 4 _ 5" and a
+ *   `* item` bullet list into `_ item` lines. An italic marker must now touch the text it wraps, as in markdown.
+ * - `***both***` becomes `*_both_*` (bold and italic). Python left a stray `**both**`.
+ * - (In the splitter) an answer with nothing but whitespace is no longer "sent" as zero messages; see messageSplitter.ts.
+ * `tests/formatter.test.ts` lists each changed input beside the output Python gave.
  */
 import { getLanguageDirectionFromText } from '../utils/language';
 
 /**
  * Convert conventional markdown to WhatsApp's markdown.
  *
- * Order matters: italic (`*x*` -> `_x_`) must run before bold (`**x**` -> `*x*`), or the new single stars would be
- * read as italics.
+ * Order matters: bold-italic (`***x***`) goes first, then italic (`*x*` -> `_x_`), then bold (`**x**` -> `*x*`).
+ * Bold must come after italic, or the single stars it produces would be read as italics.
  */
 export function formatForWhatsApp(msg: string): string {
   const direction = getLanguageDirectionFromText(msg);
 
-  let result = convertItalicSyntax(msg);
+  let result = convertBoldItalicSyntax(msg);
+  result = convertItalicSyntax(result);
   result = convertBoldSyntax(result);
   result = convertHeaders(result);
 
@@ -42,13 +45,31 @@ export function formatForWhatsApp(msg: string): string {
 }
 
 /**
+ * `\*\*\*`      three stars
+ * `(?=\S)`      the text must start right after them (so a `***` line on its own is left alone)
+ * `([^*]+?)`   the shortest run of characters that are not `*`, captured
+ * `(?<=\S)`     and end right before the closing stars
+ * `\*\*\*`      three stars
+ */
+const BOLD_ITALIC = /\*\*\*(?=\S)([^*]+?)(?<=\S)\*\*\*/g;
+
+/** Convert markdown bold-italic (`***text***`) to WhatsApp's `*_text_*`. Python left `**text**`. */
+export function convertBoldItalicSyntax(text: string): string {
+  return text.replace(BOLD_ITALIC, '*_$1_*');
+}
+
+/**
  * `(?<![*_])`  a lookbehind: the `*` must not follow another `*` or `_`
  * `\*`         a literal `*`
+ * `(?=\S)`     the text must start right after it: this is what keeps `2 * 3` and `* item` as they are
  * `([^*_]+?)`  the shortest run of characters that are neither `*` nor `_`, captured
+ * `(?<=\S)`    and end right before the closing star
  * `\*`         a literal `*`
  * `(?![*_])`   a lookahead: the `*` must not be followed by `*` or `_`
+ *
+ * Python's pattern had no `(?=\S)` and `(?<=\S)`, which is the bug being fixed.
  */
-const ITALIC = /(?<![*_])\*([^*_]+?)\*(?![*_])/g;
+const ITALIC = /(?<![*_])\*(?=\S)([^*_]+?)(?<=\S)\*(?![*_])/g;
 
 /** Convert markdown italics (`*text*`) to WhatsApp italics (`_text_`). */
 export function convertItalicSyntax(text: string): string {
