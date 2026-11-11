@@ -50,27 +50,6 @@ const UNEXPECTED_FORMAT_NOTICE =
   'It seems Meta sent your message in an unexpected format. This is not a problem in what you wrote, ' +
   'so please send this chat as screenshot to the developers to investigate further';
 
-/** The settings the app reads. `Pick` takes just these fields of the full `Env` type. */
-export type AppConfig = Pick<
-  Env,
-  | 'META_ANSARI_APP_SECRET'
-  | 'META_WEBHOOK_VERIFY_TOKEN'
-  | 'META_BUSINESS_PHONE_NUMBER_ID'
-  | 'META_REPLY_BY_PHONE'
-  | 'ALWAYS_RETURN_OK_TO_META'
-  | 'DEPLOYMENT_TYPE'
-  | 'ORIGINS'
->;
-
-export interface AppDeps {
-  config: AppConfig;
-  /** Only the three methods the routes call. */
-  manager: Pick<ConversationManager, 'triage' | 'dispatch' | 'notify'>;
-  background: BackgroundTasks;
-  logger: Logger;
-  reportError?: ErrorReporter;
-}
-
 /** How Meta is answered for each thing `triage` can decide (Python's status codes and `error_code`s). */
 const TRIAGE_REPLIES: Record<TriageAction, MetaResponseInput> = {
   maintenance: { success: false, message: 'Service under maintenance', statusCode: 503, errorCode: 'MAINTENANCE_MODE' },
@@ -97,9 +76,31 @@ function queryValue(value: unknown): string | undefined {
   return undefined;
 }
 
-export function buildApp(deps: AppDeps): Express {
-  const { config, manager, background, logger } = deps;
-  const reportError = deps.reportError ?? noopErrorReporter;
+export function buildApp({
+  config,
+  manager,
+  background,
+  logger,
+  reportError = noopErrorReporter,
+}: {
+  /** Just the settings the app reads: `Pick` takes those fields of the full `Env` type. */
+  config: Pick<
+    Env,
+    | 'META_ANSARI_APP_SECRET'
+    | 'META_WEBHOOK_VERIFY_TOKEN'
+    | 'META_BUSINESS_PHONE_NUMBER_ID'
+    | 'META_REPLY_BY_PHONE'
+    | 'ALWAYS_RETURN_OK_TO_META'
+    | 'DEPLOYMENT_TYPE'
+    | 'ORIGINS'
+  >;
+  /** Just the three methods the routes call. */
+  manager: Pick<ConversationManager, 'triage' | 'dispatch' | 'notify'>;
+  background: BackgroundTasks;
+  logger: Logger;
+  /** Where unexpected faults are reported; nothing is reported when left out. */
+  reportError?: ErrorReporter;
+}): Express {
   const app = express();
   app.disable('x-powered-by');
 
