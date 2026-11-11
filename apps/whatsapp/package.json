@@ -17,12 +17,17 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@sentry/node": "^10.69.0",
+    "cors": "^2.8.5",
     "dotenv": "^17.2.3",
+    "express": "^5.1.0",
     "zod": "^4.3.5"
   },
   "devDependencies": {
     "@ansari/eslint-config": "workspace:*",
     "@ansari/tsconfig": "workspace:*",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
     "@types/node": "^25.0.10",
     "eslint": "catalog:",
     "tsdown": "^0.22.14",

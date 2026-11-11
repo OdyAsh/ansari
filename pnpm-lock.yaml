@@ -451,9 +451,18 @@ importers:
 
   apps/whatsapp:
     dependencies:
+      '@sentry/node':
+        specifier: ^10.69.0
+        version: 10.69.0(@opentelemetry/core@2.10.0(@opentelemetry/api@1.9.1))
+      cors:
+        specifier: ^2.8.5
+        version: 2.8.6
       dotenv:
         specifier: ^17.2.3
         version: 17.4.2
+      express:
+        specifier: ^5.1.0
+        version: 5.2.1
       zod:
         specifier: ^4.3.5
         version: 4.6.7
@@ -464,6 +473,12 @@ importers:
       '@ansari/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
+      '@types/cors':
+        specifier: ^2.8.17
+        version: 2.8.19
+      '@types/express':
+        specifier: ^5.0.0
+        version: 5.0.6
       '@types/node':
         specifier: ^25.0.10
         version: 25.9.8
