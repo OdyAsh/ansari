@@ -20,9 +20,9 @@ PORTED FROM PYTHON
 
 DIFFERENCES FROM PYTHON (deliberate)
 - The routes are /whatsapp/v3 (owner decision; Meta's callback URL must be changed at cutover, a phase 7 step).
-- Raw bytes are read first and parsed by hand AFTER the signature check, so an unsigned caller learns nothing about the body. FastAPI checked the signature in a dependency before parsing; `express.json()` would parse first.
+- Raw bytes are read first and parsed by hand AFTER the signature check. This is NOT a change from Python: FastAPI also ran the signature check (a `Depends` on main.py:193) before the body was read (`request.json()` at main.py:253). It is a difference from the obvious Express setup, where `express.json()` would parse first and answer 400 to bad JSON before the signature was looked at. (My first wording called it a difference from Python; that was wrong, found when checking the Python line numbers.)
 - Invalid UTF-8 is refused with a 400 (INVALID_PAYLOAD), as Python's json.loads does.
-- The JSON parser's own error text is never returned or logged (it quotes the start of the body, i.e. the user's message). Python returned `str(e)`. The answer says only "Webhook body is not valid JSON".
+- The JSON parser's own error text is never returned or logged. Node's `SyntaxError` quotes the start of the body (checked: `Unexpected token 'h', "this is a-v"... is not valid JSON`), which is the user's message. Python also returned `str(e)` (main.py:324), but Python's text does not quote the body (checked: `Expecting value: line 1 column 1 (char 0)`). So this is protection against a leak that a straight port of `str(e)` would have introduced, not a fix of one Python had. The answer says only "Webhook body is not valid JSON".
 - Any non-parser error in the read step is answered with a fixed text; Python returned `str(e)`.
 - Body limit 1 MB (413). Python had none.
 - Express has no 405: a wrong method on a known path is a 404.

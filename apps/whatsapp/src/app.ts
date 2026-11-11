@@ -121,7 +121,7 @@ export function buildApp(deps: AppDeps): Express {
     res.setHeader('X-Request-ID', requestId);
     runWithRequestId(requestId, () => {
       logger.debug('Request started');
-      res.once('finish', () => runWithRequestId(requestId, () => logger.debug('Request ended')));
+      res.once('finish', () => logger.debug('Request ended'));
       next();
     });
   });

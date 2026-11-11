@@ -1,0 +1,71 @@
+# apps/whatsapp
+
+The WhatsApp service: a TypeScript port of [`legacy/whatsapp`](../../legacy/whatsapp/) (issue #358). A user writes to
+Ansari's WhatsApp number, Meta posts the message to this service, and the service signs the user in with `apps/auth`, asks
+`apps/api` for the answer, and sends it back through Meta.
+
+```
+Meta ──POST /whatsapp/v3──> this service ──token exchange──> apps/auth
+                                 │  ▲
+                                 │  └── answer ── apps/api (threads + streamed chat)
+                                 └──────────────> Meta (reply)
+```
+
+Meta gets its HTTP 200 first. Signing in, asking `apps/api` and replying all happen afterwards, so a slow answer never makes
+Meta send the same message again.
+
+## Run it
+
+```bash
+pnpm install                                   # once, at the repo root
+cp apps/whatsapp/.env.example apps/whatsapp/.env
+pnpm whatsapp dev                              # restarts on change
+```
+
+The service refuses to start unless its configuration is valid, and says which variable is wrong. `.env.example`
+documents every variable. With `DEPLOYMENT_TYPE=local` the three `MOCK_*` switches let it run with no Meta, `apps/auth` or
+`apps/api` at all (they are refused anywhere else). It is left out of the root `pnpm dev` on purpose: it needs its own
+`.env`, and without one it exits at once.
+
+| Command | What it does |
+|---|---|
+| `pnpm whatsapp dev` | run from source, restarting on change |
+| `pnpm whatsapp build` | bundle to `dist/index.mjs` |
+| `pnpm whatsapp start` | run the bundle |
+| `pnpm whatsapp test` / `lint` / `typecheck` | the checks CI runs |
+
+## Routes
+
+| Route | Purpose |
+|---|---|
+| `GET /` | health probe (always 200 once listening; it checks no other service) |
+| `GET /whatsapp/v3` | Meta's one-time handshake when the callback URL is saved |
+| `POST /whatsapp/v3` | every message and delivery receipt, checked against `X-Hub-Signature-256` |
+| `GET /sentry-debug` | fails on purpose to prove errors reach Sentry; not served in production |
+
+The routes are `/whatsapp/v3` where the Python service used `/whatsapp/v2`: Meta's callback URL has to be changed when the
+service is switched over.
+
+## Where things are
+
+| Path | What |
+|---|---|
+| `src/index.ts` | starts everything, handles SIGTERM |
+| `src/app.ts` | the routes |
+| `src/conversationManager.ts` | what happens to a message: sign in, thread, answer, notices |
+| `src/services/` | the three outside services (`apps/auth`, `apps/api`, Meta), each with a real and a mock client |
+| `src/webhook/` | reading Meta's payload, the signature check, Meta's reply body |
+| `src/formatting/` | markdown to WhatsApp formatting and the 4000-character splitter |
+| `src/config.ts` | every environment variable, validated |
+| `tests/` | Vitest; no test touches the network |
+
+## Deploy
+
+`Dockerfile` builds from the repo root (`docker build -f apps/whatsapp/Dockerfile .`) and `railway.toml` records the Railway
+settings. Railway reads its settings from the dashboard, not that file; keep the two in step. Railway sets `PORT` itself.
+
+## Behaviour that differs from the Python service
+
+The port keeps the Python behaviour except where a header comment in the code says otherwise. The main differences are the
+route version above, three formatting and splitting bugs fixed on purpose (see `src/formatting/`), a stricter reading of
+true/false settings (`true`, `false`, `True`, `False`, `1`, `0` only), and no trace sampling in Sentry.
