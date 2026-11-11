@@ -12,6 +12,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsdown",
     "start": "node dist/index.mjs",
+    "meta:subscriptions": "tsx scripts/checkMetaSubscriptions.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

@@ -33,6 +33,16 @@ documents every variable. With `DEPLOYMENT_TYPE=local` the three `MOCK_*` switch
 | `pnpm whatsapp build` | bundle to `dist/index.mjs` |
 | `pnpm whatsapp start` | run the bundle |
 | `pnpm whatsapp test` / `lint` / `typecheck` | the checks CI runs |
+| `pnpm whatsapp meta:subscriptions` | operator menu for Meta's webhook subscription (see below) |
+
+### The Meta subscription script
+
+`pnpm whatsapp meta:subscriptions` (`scripts/checkMetaSubscriptions.ts`) is the port of the Python
+`check_meta_subscriptions.py`. Run it by hand when messages to the business number stop arriving: it shows which Meta apps
+are subscribed to the Messaging account, the token's own app and expiry, and the phone numbers, and can subscribe or
+unsubscribe the token's app (each change asks for `yes` first). It reads `META_ACCESS_TOKEN_FROM_SYS_USER` and
+`META_MESSAGING_ACCOUNT_ID` from `.env` (or asks; the token is typed hidden) and never prints the token. Options 1 to 4 and 7
+only read; 5 and 6 change Meta. It is not part of the service image.
 
 ## Routes
 
