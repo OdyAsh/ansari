@@ -20,11 +20,11 @@ plan_phases:
     status: complete
   - id: phase_6
     title: Docker, Railway config, CI, turbo and documentation
-    status: in_progress
+    status: complete
   - id: phase_7
     title: Staging redeploy, smoke test and legacy rollback note
-    status: pending
-current_plan_phase: phase_6
+    status: in_progress
+current_plan_phase: phase_7
 gates:
   spec-approval:
     status: approved
@@ -37,10 +37,10 @@ gates:
   verify-approval:
     status: pending
 iteration: 1
-build_complete: true
+build_complete: false
 history: []
 started_at: '2026-11-10T12:39:08.669Z'
-updated_at: '2026-11-11T05:19:03.559Z'
+updated_at: '2026-11-11T05:19:06.566Z'
 context_refreshes:
   - boundary: enter:plan
     at: '2026-11-10T13:37:26.336Z'
@@ -63,3 +63,5 @@ context_refreshes:
   - boundary: plan-phase:phase_6
     at: '2026-11-11T03:56:18.757Z'
     acknowledged_at: '2026-11-11T05:19:03.557Z'
+  - boundary: plan-phase:phase_7
+    at: '2026-11-11T05:19:06.565Z'
